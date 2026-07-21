@@ -2,8 +2,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,8 +23,9 @@ import (
 )
 
 const (
-	defaultProbeTarget = "https://speed.cloudflare.com/cdn-cgi/trace"
-	defaultDialTimeout = 10 * time.Second
+	defaultProbeTarget  = "https://speed.cloudflare.com/cdn-cgi/trace"
+	defaultDialTimeout  = 10 * time.Second
+	maxPersistedInteger = 2147483647
 )
 
 // Control owns the sampler worker lifecycle behind the HTTP API.
@@ -67,7 +71,52 @@ func (s *Server) Handler() http.Handler {
 	return openapi.HandlerWithOptions(strict, openapi.ChiServerOptions{
 		BaseRouter:       router,
 		ErrorHandlerFunc: requestErrorHandler,
+		Middlewares:      []openapi.MiddlewareFunc{validateCreateSessionRequest},
 	})
+}
+
+func validateCreateSessionRequest(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			requestErrorHandler(w, r, err)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		r.ContentLength = int64(len(raw))
+		if err := validateCreateSessionJSON(raw); err != nil {
+			requestErrorHandler(w, r, err)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func validateCreateSessionJSON(raw []byte) error {
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := decoder.Decode(&fields); err != nil || fields == nil {
+		return invalidRequest()
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return invalidRequest()
+	}
+	for name, value := range fields {
+		switch name {
+		case "name", "proxy", "mode", "cadence_seconds", "max_samples", "max_duration_seconds":
+		case "probes_per_sample", "probe_target", "dial_timeout_ms":
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return invalidRequest()
+			}
+		default:
+			return invalidRequest()
+		}
+	}
+	return nil
 }
 
 // CreateSession encrypts, persists, and starts a new sampling session.
@@ -80,7 +129,7 @@ func (s *Server) CreateSession(ctx context.Context, request openapi.CreateSessio
 	if name == "" || utf8.RuneCountInString(name) > 100 || body.Proxy == nil || *body.Proxy == "" {
 		return nil, invalidRequest()
 	}
-	if body.CadenceSeconds < 1 || (body.Mode != openapi.CreateSessionRequestModeSticky && body.Mode != openapi.CreateSessionRequestModePool) {
+	if !validPersistedInteger(body.CadenceSeconds, 1) || (body.Mode != openapi.CreateSessionRequestModeSticky && body.Mode != openapi.CreateSessionRequestModePool) {
 		return nil, invalidRequest()
 	}
 	probes := defaultProbes(body.Mode)
@@ -99,9 +148,13 @@ func (s *Server) CreateSession(ctx context.Context, request openapi.CreateSessio
 	}
 	dialTimeout := s.defaults.DialTimeout
 	if body.DialTimeoutMs != nil {
+		if !validPersistedInteger(*body.DialTimeoutMs, 100) {
+			return nil, invalidRequest()
+		}
 		dialTimeout = time.Duration(*body.DialTimeoutMs) * time.Millisecond
 	}
-	if dialTimeout < 100*time.Millisecond || !validOptionalPositive(body.MaxSamples) || !validOptionalPositive(body.MaxDurationSeconds) {
+	if dialTimeout < 100*time.Millisecond || dialTimeout > time.Duration(maxPersistedInteger)*time.Millisecond ||
+		!validOptionalPersistedInteger(body.MaxSamples) || !validOptionalPersistedInteger(body.MaxDurationSeconds) {
 		return nil, invalidRequest()
 	}
 
@@ -130,7 +183,10 @@ func (s *Server) CreateSession(ctx context.Context, request openapi.CreateSessio
 		return nil, internalError()
 	}
 	if err := s.control.Start(ctx, created.ID); err != nil {
-		_ = s.store.Stop(context.WithoutCancel(ctx), created.ID, s.now().UTC())
+		cleanupContext := context.WithoutCancel(ctx)
+		if err := s.store.Stop(cleanupContext, created.ID, s.now().UTC()); err != nil {
+			_ = s.store.Delete(cleanupContext, created.ID)
+		}
 		return nil, internalError()
 	}
 	return openapi.CreateSession201JSONResponse(mapSession(created)), nil
@@ -215,7 +271,13 @@ func validProbeTarget(raw string) bool {
 	return err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
 }
 
-func validOptionalPositive(value *int) bool { return value == nil || *value >= 1 }
+func validPersistedInteger(value, minimum int) bool {
+	return value >= minimum && value <= maxPersistedInteger
+}
+
+func validOptionalPersistedInteger(value *int) bool {
+	return value == nil || validPersistedInteger(*value, 1)
+}
 
 func cloneInt(value *int) *int {
 	if value == nil {
@@ -300,7 +362,7 @@ func (s *Server) Healthz(context.Context, openapi.HealthzRequestObject) (openapi
 }
 
 func (s *Server) Readyz(context.Context, openapi.ReadyzRequestObject) (openapi.ReadyzResponseObject, error) {
-	return nil, dependencyUnavailable()
+	return openapi.Readyz500JSONResponse{InternalErrorJSONResponse: internalErrorJSON()}, nil
 }
 
 var _ openapi.StrictServerInterface = (*Server)(nil)

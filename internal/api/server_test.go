@@ -127,6 +127,69 @@ func TestCreateSessionRejectsInvalidProbeTarget(t *testing.T) {
 	}
 }
 
+func TestCreateSessionRejectsRuntimeSchemaViolations(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "unknown property", body: `{"name":"Unknown","proxy":"` + testProxy + `","mode":"sticky","cadence_seconds":10,"unexpected":true}`},
+		{name: "null probes", body: `{"name":"Null probes","proxy":"` + testProxy + `","mode":"sticky","cadence_seconds":10,"probes_per_sample":null}`},
+		{name: "null probe target", body: `{"name":"Null target","proxy":"` + testProxy + `","mode":"sticky","cadence_seconds":10,"probe_target":null}`},
+		{name: "null dial timeout", body: `{"name":"Null timeout","proxy":"` + testProxy + `","mode":"sticky","cadence_seconds":10,"dial_timeout_ms":null}`},
+		{name: "trailing JSON", body: `{"name":"Trailing","proxy":"` + testProxy + `","mode":"sticky","cadence_seconds":10} {}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMemoryStore()
+			response := request(t, testHandler(t, store, &fakeControl{}), http.MethodPost, "/api/sessions", tt.body)
+			assertAPIError(t, response, http.StatusBadRequest, "invalid_request")
+			if len(store.sessions) != 0 {
+				t.Fatalf("created sessions = %d, want 0", len(store.sessions))
+			}
+		})
+	}
+}
+
+func TestCreateSessionEnforcesPersistedIntegerBounds(t *testing.T) {
+	const maxInt32 = 2147483647
+	t.Run("maximum accepted", func(t *testing.T) {
+		store := newMemoryStore()
+		body := `{"name":"Maximum","proxy":"` + testProxy + `","mode":"sticky","cadence_seconds":2147483647,"dial_timeout_ms":2147483647,"max_samples":2147483647,"max_duration_seconds":2147483647}`
+		response := request(t, testHandler(t, store, &fakeControl{}), http.MethodPost, "/api/sessions", body)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201; body=%s", response.Code, response.Body.String())
+		}
+		created := store.sessions[0]
+		if created.Cadence != time.Duration(maxInt32)*time.Second || created.DialTimeout != time.Duration(maxInt32)*time.Millisecond {
+			t.Errorf("durations = %s/%s, want max persisted values", created.Cadence, created.DialTimeout)
+		}
+		if created.MaxSamples == nil || *created.MaxSamples != maxInt32 || created.MaxDuration == nil || *created.MaxDuration != time.Duration(maxInt32)*time.Second {
+			t.Errorf("caps = %v/%v, want max persisted values", created.MaxSamples, created.MaxDuration)
+		}
+	})
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "cadence", body: `{"name":"Overflow","proxy":"` + testProxy + `","mode":"sticky","cadence_seconds":2147483648}`},
+		{name: "dial timeout", body: `{"name":"Overflow","proxy":"` + testProxy + `","mode":"sticky","cadence_seconds":10,"dial_timeout_ms":2147483648}`},
+		{name: "max samples", body: `{"name":"Overflow","proxy":"` + testProxy + `","mode":"sticky","cadence_seconds":10,"max_samples":2147483648}`},
+		{name: "max duration", body: `{"name":"Overflow","proxy":"` + testProxy + `","mode":"sticky","cadence_seconds":10,"max_duration_seconds":2147483648}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name+" overflow rejected", func(t *testing.T) {
+			store := newMemoryStore()
+			response := request(t, testHandler(t, store, &fakeControl{}), http.MethodPost, "/api/sessions", tt.body)
+			assertAPIError(t, response, http.StatusBadRequest, "invalid_request")
+			if len(store.sessions) != 0 {
+				t.Fatalf("created sessions = %d, want 0", len(store.sessions))
+			}
+		})
+	}
+}
+
 func TestCreateSessionStartFailureStopsPersistedRow(t *testing.T) {
 	store := newMemoryStore()
 	control := &fakeControl{startErr: errors.New("prepare worker with secret proxy-password failed")}
@@ -164,6 +227,23 @@ func TestCreateSessionStartFailureStopsRowAfterRequestCancellation(t *testing.T)
 	assertAPIError(t, response, http.StatusInternalServerError, "internal_error")
 	if len(store.sessions) != 1 || store.sessions[0].Status != session.StatusStopped {
 		t.Fatalf("persisted row after canceled start = %#v, want stopped", store.sessions)
+	}
+}
+
+func TestCreateSessionStartFailureDeletesRowWhenStopCleanupFails(t *testing.T) {
+	store := newMemoryStore()
+	store.stopErr = errors.New("stop failed")
+	control := &fakeControl{startErr: errors.New("start failed")}
+	handler := testHandler(t, store, control)
+
+	response := request(t, handler, http.MethodPost, "/api/sessions", `{"name":"Cleanup","proxy":"`+testProxy+`","mode":"sticky","cadence_seconds":10}`)
+
+	assertAPIError(t, response, http.StatusInternalServerError, "internal_error")
+	if len(store.sessions) != 0 {
+		t.Fatalf("persisted sessions after cleanup = %#v, want deleted", store.sessions)
+	}
+	if store.deleteCalls != 1 {
+		t.Fatalf("delete calls = %d, want 1", store.deleteCalls)
 	}
 }
 
@@ -286,6 +366,11 @@ func TestControlRoutesAreRegisteredAtPublicPaths(t *testing.T) {
 	}
 }
 
+func TestReadyPlaceholderReturnsDeclaredInternalError(t *testing.T) {
+	response := request(t, testHandler(t, newMemoryStore(), &fakeControl{}), http.MethodGet, "/readyz", "")
+	assertAPIError(t, response, http.StatusInternalServerError, "internal_error")
+}
+
 func testHandler(t *testing.T, store session.Store, control Control) http.Handler {
 	t.Helper()
 	cipher, err := cryptox.New([]byte("0123456789abcdef0123456789abcdef"))
@@ -403,7 +488,9 @@ type memoryStore struct {
 	getErr             error
 	createErr          error
 	stopErr            error
+	deleteErr          error
 	rejectCanceledStop bool
+	deleteCalls        int
 }
 
 func newMemoryStore() *memoryStore { return &memoryStore{sessions: []session.Session{}} }
@@ -456,6 +543,10 @@ func (s *memoryStore) Stop(ctx context.Context, id uuid.UUID, at time.Time) erro
 func (s *memoryStore) Finish(context.Context, uuid.UUID, time.Time) error { return nil }
 
 func (s *memoryStore) Delete(_ context.Context, id uuid.UUID) error {
+	s.deleteCalls++
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
 	for i := range s.sessions {
 		if s.sessions[i].ID == id {
 			s.sessions = append(s.sessions[:i], s.sessions[i+1:]...)

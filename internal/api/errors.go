@@ -40,6 +40,10 @@ func internalError() error {
 	return &apiError{status: http.StatusInternalServerError, code: errorCodeInternal, message: "internal server error"}
 }
 
+func internalErrorJSON() openapi.InternalErrorJSONResponse {
+	return openapi.InternalErrorJSONResponse{Code: errorCodeInternal, Message: "internal server error"}
+}
+
 func dependencyUnavailable() error {
 	return &apiError{status: http.StatusServiceUnavailable, code: errorCodeDependencyUnavailable, message: "dependency unavailable"}
 }

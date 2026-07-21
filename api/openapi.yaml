@@ -222,12 +222,12 @@ components:
         name: {type: string, minLength: 1, maxLength: 100}
         proxy: {type: string, minLength: 1, writeOnly: true}
         mode: {type: string, enum: [sticky, pool]}
-        cadence_seconds: {type: integer, minimum: 1}
+        cadence_seconds: {type: integer, minimum: 1, maximum: 2147483647}
         probes_per_sample: {type: integer, minimum: 1, maximum: 255}
         probe_target: {type: string, format: uri}
-        dial_timeout_ms: {type: integer, minimum: 100, default: 10000}
-        max_samples: {type: integer, minimum: 1, nullable: true}
-        max_duration_seconds: {type: integer, minimum: 1, nullable: true}
+        dial_timeout_ms: {type: integer, minimum: 100, maximum: 2147483647, default: 10000}
+        max_samples: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
+        max_duration_seconds: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
     Session:
       type: object
       required: [id, name, proxy_display, mode, status, cadence_seconds, probes_per_sample,
@@ -239,12 +239,12 @@ components:
         proxy_display: {type: string}
         mode: {type: string, enum: [sticky, pool]}
         status: {type: string, enum: [running, stopped, finished]}
-        cadence_seconds: {type: integer}
+        cadence_seconds: {type: integer, minimum: 1, maximum: 2147483647}
         probes_per_sample: {type: integer}
         probe_target: {type: string, format: uri}
-        dial_timeout_ms: {type: integer}
-        max_samples: {type: integer, nullable: true}
-        max_duration_seconds: {type: integer, nullable: true}
+        dial_timeout_ms: {type: integer, minimum: 100, maximum: 2147483647}
+        max_samples: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
+        max_duration_seconds: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
         samples_taken: {type: integer}
         probes_ok: {type: integer, format: int64}
         probes_total: {type: integer, format: int64}
