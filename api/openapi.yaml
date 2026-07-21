@@ -1,0 +1,431 @@
+openapi: 3.0.3
+info:
+  title: Proxy Sampler API
+  version: 1.0.0
+paths:
+  /api/sessions:
+    post:
+      operationId: createSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: Session created and started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/DependencyUnavailable'}
+    get:
+      operationId: listSessions
+      responses:
+        '200':
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Session'
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/DependencyUnavailable'}
+  /api/sessions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/SessionID'
+    get:
+      operationId: sessionByID
+      responses:
+        '200':
+          description: Session detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/DependencyUnavailable'}
+    delete:
+      operationId: deleteSession
+      responses:
+        '204':
+          description: Session deleted
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/DependencyUnavailable'}
+  /api/sessions/{id}/stop:
+    parameters:
+      - $ref: '#/components/parameters/SessionID'
+    post:
+      operationId: stopSession
+      responses:
+        '204':
+          description: Session stopped
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/DependencyUnavailable'}
+  /api/sessions/{id}/report:
+    parameters:
+      - $ref: '#/components/parameters/SessionID'
+      - $ref: '#/components/parameters/From'
+      - $ref: '#/components/parameters/To'
+    get:
+      operationId: sessionReport
+      responses:
+        '200':
+          description: Composed session report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionReport'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/DependencyUnavailable'}
+  /api/sessions/{id}/samples:
+    parameters:
+      - $ref: '#/components/parameters/SessionID'
+      - $ref: '#/components/parameters/From'
+      - $ref: '#/components/parameters/To'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+    get:
+      operationId: sessionSamples
+      responses:
+        '200':
+          description: Newest-first page of grouped samples
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SamplePage'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/DependencyUnavailable'}
+  /api/sessions/{id}/export.csv:
+    parameters:
+      - $ref: '#/components/parameters/SessionID'
+      - $ref: '#/components/parameters/From'
+      - $ref: '#/components/parameters/To'
+    get:
+      operationId: exportSessionCSV
+      responses:
+        '200':
+          description: Chronological per-probe CSV export
+          headers:
+            Content-Disposition:
+              schema: {type: string}
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/DependencyUnavailable'}
+  /healthz:
+    get:
+      operationId: healthz
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '500': {$ref: '#/components/responses/InternalError'}
+  /readyz:
+    get:
+      operationId: readyz
+      responses:
+        '200':
+          description: Dependencies are ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '503':
+          description: At least one dependency is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '500': {$ref: '#/components/responses/InternalError'}
+components:
+  parameters:
+    SessionID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    From:
+      name: from
+      in: query
+      schema:
+        type: string
+        format: date-time
+    To:
+      name: to
+      in: query
+      schema:
+        type: string
+        format: date-time
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Conflict:
+      description: Resource state conflict
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    DependencyUnavailable:
+      description: A required dependency is unavailable
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+  schemas:
+    CreateSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [name, proxy, mode, cadence_seconds]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        proxy: {type: string, minLength: 1, writeOnly: true}
+        mode: {type: string, enum: [sticky, pool]}
+        cadence_seconds: {type: integer, minimum: 1}
+        probes_per_sample: {type: integer, minimum: 1, maximum: 255}
+        probe_target: {type: string, format: uri}
+        dial_timeout_ms: {type: integer, minimum: 100, default: 10000}
+        max_samples: {type: integer, minimum: 1, nullable: true}
+        max_duration_seconds: {type: integer, minimum: 1, nullable: true}
+    Session:
+      type: object
+      required: [id, name, proxy_display, mode, status, cadence_seconds, probes_per_sample,
+        probe_target, dial_timeout_ms, samples_taken, probes_ok, probes_total, success_rate,
+        distinct_ips, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        proxy_display: {type: string}
+        mode: {type: string, enum: [sticky, pool]}
+        status: {type: string, enum: [running, stopped, finished]}
+        cadence_seconds: {type: integer}
+        probes_per_sample: {type: integer}
+        probe_target: {type: string, format: uri}
+        dial_timeout_ms: {type: integer}
+        max_samples: {type: integer, nullable: true}
+        max_duration_seconds: {type: integer, nullable: true}
+        samples_taken: {type: integer}
+        probes_ok: {type: integer, format: int64}
+        probes_total: {type: integer, format: int64}
+        success_rate: {type: number, format: double, minimum: 0, maximum: 1}
+        distinct_ips: {type: integer}
+        last_sample_at: {type: string, format: date-time, nullable: true}
+        last_primary_ip: {type: string, nullable: true}
+        last_primary_category: {type: string, nullable: true}
+        last_rtt_ms: {type: integer, nullable: true}
+        last_error: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+        started_at: {type: string, format: date-time, nullable: true}
+        stopped_at: {type: string, format: date-time, nullable: true}
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+    SampleEvent:
+      type: object
+      required: [sample_seq, sampled_at, probes_attempted, probes_ok, distinct_ips,
+        ip_changed, new_ips, rtt_min_ms, rtt_med_ms, rtt_max_ms, primary_category,
+        primary_risk, probe_ips, probe_rtts_ms, probe_ok, error]
+      properties:
+        sample_seq: {type: integer, format: int64}
+        sampled_at: {type: string, format: date-time}
+        probes_attempted: {type: integer}
+        probes_ok: {type: integer}
+        primary_ip: {type: string, nullable: true}
+        distinct_ips: {type: integer}
+        ip_changed: {type: boolean}
+        new_ips: {type: integer}
+        rtt_min_ms: {type: integer}
+        rtt_med_ms: {type: integer}
+        rtt_max_ms: {type: integer}
+        egress_country: {type: string}
+        primary_category: {type: string}
+        primary_risk: {type: integer}
+        probe_ips:
+          type: array
+          items: {type: string, nullable: true}
+        probe_rtts_ms:
+          type: array
+          items: {type: integer}
+        probe_ok:
+          type: array
+          items: {type: boolean}
+        error: {type: string}
+    SamplePage:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/SampleEvent'}
+        page: {type: integer, minimum: 1}
+        page_size: {type: integer, minimum: 1}
+        total: {type: integer, format: int64, minimum: 0}
+    SessionReport:
+      type: object
+      required: [series, stickiness, pool_growth, pool_composition, reputation_summary,
+        risk_histogram, ips]
+      properties:
+        series:
+          type: array
+          items: {$ref: '#/components/schemas/SeriesPoint'}
+        stickiness: {$ref: '#/components/schemas/Stickiness'}
+        pool_growth:
+          type: array
+          items: {$ref: '#/components/schemas/PoolGrowthPoint'}
+        pool_composition: {$ref: '#/components/schemas/PoolComposition'}
+        reputation_summary: {$ref: '#/components/schemas/ReputationSummary'}
+        risk_histogram:
+          type: array
+          items: {$ref: '#/components/schemas/RiskBucket'}
+        ips:
+          type: array
+          items: {$ref: '#/components/schemas/IPRow'}
+    SeriesPoint:
+      type: object
+      required: [at, success_rate, latency_p50_ms, latency_p95_ms, distinct_per_sample,
+        ip_changes, mobile, residential, datacenter, unknown]
+      properties:
+        at: {type: string, format: date-time}
+        success_rate: {type: number, format: double, minimum: 0, maximum: 1}
+        latency_p50_ms: {type: number, format: double, minimum: 0}
+        latency_p95_ms: {type: number, format: double, minimum: 0}
+        distinct_per_sample: {type: number, format: double, minimum: 0}
+        ip_changes: {type: integer, format: int64, minimum: 0}
+        mobile: {type: integer, format: int64, minimum: 0}
+        residential: {type: integer, format: int64, minimum: 0}
+        datacenter: {type: integer, format: int64, minimum: 0}
+        unknown: {type: integer, format: int64, minimum: 0}
+    Stickiness:
+      type: object
+      required: [holds, rotations, average_hold_seconds, median_hold_seconds]
+      properties:
+        holds:
+          type: array
+          items: {$ref: '#/components/schemas/Hold'}
+        rotations:
+          type: array
+          items: {$ref: '#/components/schemas/Rotation'}
+        average_hold_seconds: {type: number, format: double, minimum: 0}
+        median_hold_seconds: {type: number, format: double, minimum: 0}
+    Hold:
+      type: object
+      required: [ip, started_at, ended_at, samples, duration_seconds]
+      properties:
+        ip: {type: string}
+        started_at: {type: string, format: date-time}
+        ended_at: {type: string, format: date-time}
+        samples: {type: integer, format: int64, minimum: 0}
+        duration_seconds: {type: integer, format: int64, minimum: 0}
+    Rotation:
+      type: object
+      required: [at, from_ip, to_ip, since_previous_seconds]
+      properties:
+        at: {type: string, format: date-time}
+        from_ip: {type: string}
+        to_ip: {type: string}
+        since_previous_seconds: {type: integer, format: int64, minimum: 0}
+    PoolGrowthPoint:
+      type: object
+      required: [at, distinct_ips]
+      properties:
+        at: {type: string, format: date-time}
+        distinct_ips: {type: integer, format: int64, minimum: 0}
+    PoolComposition:
+      type: object
+      required: [mobile, residential, datacenter, unknown]
+      properties:
+        mobile: {type: integer, minimum: 0}
+        residential: {type: integer, minimum: 0}
+        datacenter: {type: integer, minimum: 0}
+        unknown: {type: integer, minimum: 0}
+    ReputationSummary:
+      type: object
+      required: [total_ips, flagged_ips, flagged_percent, dnsbl_hit_ips]
+      properties:
+        total_ips: {type: integer, minimum: 0}
+        flagged_ips: {type: integer, minimum: 0}
+        flagged_percent: {type: number, format: double, minimum: 0, maximum: 100}
+        dnsbl_hit_ips: {type: integer, minimum: 0}
+    RiskBucket:
+      type: object
+      required: [label, min, max, count]
+      properties:
+        label: {type: string}
+        min: {type: integer, minimum: 0, maximum: 100}
+        max: {type: integer, minimum: 0, maximum: 100}
+        count: {type: integer, minimum: 0}
+    IPRow:
+      type: object
+      required: [ip, category, country, isp, asn, risk_score, greynoise_class,
+        dnsbl_listed, dnsbl_hits, first_seen, last_seen, hit_count]
+      properties:
+        ip: {type: string}
+        category: {type: string}
+        country: {type: string}
+        isp: {type: string}
+        asn: {type: string}
+        risk_score: {type: integer, nullable: true, minimum: 0, maximum: 100}
+        greynoise_class: {type: string}
+        dnsbl_listed: {type: boolean}
+        dnsbl_hits:
+          type: array
+          items: {type: string}
+        first_seen: {type: string, format: date-time}
+        last_seen: {type: string, format: date-time}
+        hit_count: {type: integer, format: int64, minimum: 0}
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [ok]}
+    Readiness:
+      type: object
+      required: [postgres, clickhouse]
+      properties:
+        postgres: {type: boolean}
+        clickhouse: {type: boolean}
