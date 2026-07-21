@@ -31,6 +31,7 @@ func TestClassify(t *testing.T) {
 			"datacenter",
 		},
 		{"false mobile remains residential", Partial{IsMobile: ptr(false), HadSignal: true}, "residential"},
+		{"hosting flag alone remains residential", Partial{IPAPIHosting: ptr(true), HadSignal: true}, "residential"},
 		{"successful empty lookup", Partial{HadSignal: true}, "residential"},
 	}
 
@@ -38,6 +39,29 @@ func TestClassify(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := Classify(tt.p); got != tt.want {
 				t.Fatalf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifyASNTokensRequireWordOrPhraseBoundaries(t *testing.T) {
+	tests := []struct {
+		name string
+		asn  string
+		want string
+	}{
+		{"aws inside dawson", "AS64500 Dawson Networks", "residential"},
+		{"colo inside colombia", "AS64501 Colombia Telecom", "residential"},
+		{"server inside observer", "AS64502 Observer Network", "residential"},
+		{"standalone aws", "AS16509 AWS Backbone", "datacenter"},
+		{"hyphenated google cloud phrase", "AS15169 Google-Cloud Platform", "datacenter"},
+		{"punctuated data center phrase", "AS64503 Data.Center Services", "datacenter"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Classify(Partial{ASN: tt.asn, HadSignal: true}); got != tt.want {
+				t.Fatalf("Classify(%q) = %q, want %q", tt.asn, got, tt.want)
 			}
 		})
 	}
@@ -177,6 +201,83 @@ func TestMergeMissingFieldsDoNotOverwrite(t *testing.T) {
 
 	if !reflect.DeepEqual(dst, want) {
 		t.Fatalf("Merge(empty) changed destination:\n got: %#v\nwant: %#v", dst, want)
+	}
+}
+
+func TestMergeCopiesPointerAndRawInputs(t *testing.T) {
+	sourceBool := true
+	sourceInt := 42
+	sourceRaw := json.RawMessage(`{"source":true}`)
+	incoming := Partial{
+		IsMobile:        &sourceBool,
+		IPAPIProxy:      &sourceBool,
+		IPAPIHosting:    &sourceBool,
+		ProxyCheckProxy: &sourceBool,
+		RiskScore:       &sourceInt,
+		SFSAppears:      &sourceBool,
+		SFSFrequency:    &sourceInt,
+		DNSBLListed:     &sourceBool,
+		Raw:             map[string]json.RawMessage{"provider": sourceRaw},
+	}
+	var dst Partial
+
+	dst.Merge(incoming)
+	sourceBool = false
+	sourceInt = 0
+	sourceRaw[2] = 'X'
+
+	assertPointerValue(t, "IsMobile", dst.IsMobile, true)
+	assertPointerValue(t, "IPAPIProxy", dst.IPAPIProxy, true)
+	assertPointerValue(t, "IPAPIHosting", dst.IPAPIHosting, true)
+	assertPointerValue(t, "ProxyCheckProxy", dst.ProxyCheckProxy, true)
+	assertPointerValue(t, "RiskScore", dst.RiskScore, 42)
+	assertPointerValue(t, "SFSAppears", dst.SFSAppears, true)
+	assertPointerValue(t, "SFSFrequency", dst.SFSFrequency, 42)
+	assertPointerValue(t, "DNSBLListed", dst.DNSBLListed, true)
+	if got := string(dst.Raw["provider"]); got != `{"source":true}` {
+		t.Fatalf("Raw[provider] = %q after source mutation, want independent copy", got)
+	}
+}
+
+func TestMergePresentFalseAndZeroOverwriteExistingValues(t *testing.T) {
+	dst := Partial{
+		IsMobile:        ptr(true),
+		IPAPIProxy:      ptr(true),
+		IPAPIHosting:    ptr(true),
+		ProxyCheckProxy: ptr(true),
+		RiskScore:       ptr(99),
+		SFSAppears:      ptr(true),
+		SFSFrequency:    ptr(99),
+		DNSBLListed:     ptr(true),
+	}
+	dst.Merge(Partial{
+		IsMobile:        ptr(false),
+		IPAPIProxy:      ptr(false),
+		IPAPIHosting:    ptr(false),
+		ProxyCheckProxy: ptr(false),
+		RiskScore:       ptr(0),
+		SFSAppears:      ptr(false),
+		SFSFrequency:    ptr(0),
+		DNSBLListed:     ptr(false),
+	})
+
+	assertPointerValue(t, "IsMobile", dst.IsMobile, false)
+	assertPointerValue(t, "IPAPIProxy", dst.IPAPIProxy, false)
+	assertPointerValue(t, "IPAPIHosting", dst.IPAPIHosting, false)
+	assertPointerValue(t, "ProxyCheckProxy", dst.ProxyCheckProxy, false)
+	assertPointerValue(t, "RiskScore", dst.RiskScore, 0)
+	assertPointerValue(t, "SFSAppears", dst.SFSAppears, false)
+	assertPointerValue(t, "SFSFrequency", dst.SFSFrequency, 0)
+	assertPointerValue(t, "DNSBLListed", dst.DNSBLListed, false)
+}
+
+func TestMergeNormalizesExistingDNSBLHitsWithoutIncomingHits(t *testing.T) {
+	dst := Partial{DNSBLHits: []string{"zone-a", "zone-a", "zone-b", "zone-a"}}
+
+	dst.Merge(Partial{})
+
+	if want := []string{"zone-a", "zone-b"}; !reflect.DeepEqual(dst.DNSBLHits, want) {
+		t.Fatalf("DNSBLHits = %#v, want encounter-order uniqueness %#v", dst.DNSBLHits, want)
 	}
 }
 

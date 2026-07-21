@@ -1,6 +1,7 @@
 package enrich
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/netip"
@@ -76,7 +77,7 @@ func (p *Partial) Merge(incoming Partial) {
 			p.Raw = make(map[string]json.RawMessage, len(incoming.Raw))
 		}
 		for provider, payload := range incoming.Raw {
-			p.Raw[provider] = payload
+			p.Raw[provider] = bytes.Clone(payload)
 		}
 	}
 
@@ -106,18 +107,20 @@ func mergeString(destination *string, incoming string) {
 
 func mergeBool(destination **bool, incoming *bool) {
 	if incoming != nil {
-		*destination = incoming
+		value := *incoming
+		*destination = &value
 	}
 }
 
 func mergeInt(destination **int, incoming *int) {
 	if incoming != nil {
-		*destination = incoming
+		value := *incoming
+		*destination = &value
 	}
 }
 
 func unionStrings(existing, incoming []string) []string {
-	if len(incoming) == 0 {
+	if len(existing) == 0 && len(incoming) == 0 {
 		return existing
 	}
 

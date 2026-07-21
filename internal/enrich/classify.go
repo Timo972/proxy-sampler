@@ -1,6 +1,9 @@
 package enrich
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 const (
 	CategoryMobile      = "mobile"
@@ -59,11 +62,18 @@ func isDatacenterType(proxyCheckType string) bool {
 }
 
 func hasDatacenterASN(asn string) bool {
-	normalized := strings.ToLower(asn)
+	normalized := " " + normalizeWords(asn) + " "
 	for _, token := range datacenterASNTokens {
-		if strings.Contains(normalized, token) {
+		if strings.Contains(normalized, " "+token+" ") {
 			return true
 		}
 	}
 	return false
+}
+
+func normalizeWords(value string) string {
+	words := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	return strings.Join(words, " ")
 }
