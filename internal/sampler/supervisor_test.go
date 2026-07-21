@@ -228,6 +228,78 @@ func TestSupervisorSerializesStartWithDelete(t *testing.T) {
 	}
 }
 
+func TestSupervisorResumeSkipsSessionStoppedAfterRunningSnapshot(t *testing.T) {
+	root, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := newFakeSessionStore()
+	store.runningStarted, store.runningRelease = make(chan struct{}), make(chan struct{})
+	value, cipher := encryptedSession(t, 1)
+	store.sessions[value.ID] = value
+	sink := &fakeEventSink{}
+	supervisor := NewSupervisor(root, store, sink, &fakeSessionReader{}, func(session.Session) *Worker {
+		return testWorker(store, cipher, blockingProber{}, &fakeLookup{}, sink)
+	})
+	resumeResult := make(chan error, 1)
+	go func() { resumeResult <- supervisor.Resume(context.Background()) }()
+	<-store.runningStarted
+	if err := supervisor.Stop(context.Background(), value.ID); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	close(store.runningRelease)
+	if err := <-resumeResult; err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	supervisor.mu.Lock()
+	count := len(supervisor.workers)
+	supervisor.mu.Unlock()
+	if count != 0 {
+		t.Fatalf("workers after concurrent Stop = %d, want 0", count)
+	}
+}
+
+func TestSupervisorResumeSkipsSessionDeletedAfterRunningSnapshot(t *testing.T) {
+	root, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := newFakeSessionStore()
+	store.runningStarted, store.runningRelease = make(chan struct{}), make(chan struct{})
+	value, cipher := encryptedSession(t, 1)
+	store.sessions[value.ID] = value
+	sink := &fakeEventSink{}
+	supervisor := NewSupervisor(root, store, sink, &fakeSessionReader{}, func(session.Session) *Worker {
+		return testWorker(store, cipher, blockingProber{}, &fakeLookup{}, sink)
+	})
+	resumeResult := make(chan error, 1)
+	go func() { resumeResult <- supervisor.Resume(context.Background()) }()
+	<-store.runningStarted
+	if err := supervisor.Delete(context.Background(), value.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	close(store.runningRelease)
+	if err := <-resumeResult; err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	supervisor.mu.Lock()
+	count := len(supervisor.workers)
+	supervisor.mu.Unlock()
+	if count != 0 {
+		t.Fatalf("workers after concurrent Delete = %d, want 0", count)
+	}
+}
+
+func TestSupervisorResumePropagatesPrepareErrNotFound(t *testing.T) {
+	store := newFakeSessionStore()
+	value, cipher := encryptedSession(t, 1)
+	store.sessions[value.ID] = value
+	store.ipsErr = session.ErrNotFound
+	sink := &fakeEventSink{}
+	supervisor := NewSupervisor(context.Background(), store, sink, &fakeSessionReader{}, func(session.Session) *Worker {
+		return testWorker(store, cipher, fixedProber{}, &fakeLookup{}, sink)
+	})
+	if err := supervisor.Resume(context.Background()); err == nil {
+		t.Fatal("Resume prepare error = nil, want propagated SessionIPs failure")
+	}
+}
+
 func TestSupervisorWaitClosesPublicationGate(t *testing.T) {
 	root, cancel := context.WithCancel(context.Background())
 	defer cancel()

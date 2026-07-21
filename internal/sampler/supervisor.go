@@ -63,7 +63,15 @@ func (s *Supervisor) Resume(ctx context.Context) error {
 		if value.Status != session.StatusRunning {
 			continue
 		}
-		if err := s.withSessionOperation(ctx, value.ID, func() error { return s.start(value, ctx) }); err != nil {
+		var stale bool
+		err := s.withSessionOperation(ctx, value.ID, func() error {
+			var err error
+			stale, err = s.startCurrent(ctx, value.ID)
+			return err
+		})
+		if stale && (errors.Is(err, session.ErrNotRunning) || errors.Is(err, session.ErrNotFound)) {
+			continue
+		} else if err != nil {
 			return fmt.Errorf("resume session %s: %w", value.ID, err)
 		}
 	}
@@ -76,18 +84,28 @@ func (s *Supervisor) Start(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 	return s.withSessionOperation(ctx, id, func() error {
-		s.mu.Lock()
-		_, exists := s.workers[id]
-		s.mu.Unlock()
-		if exists {
-			return nil
-		}
-		value, err := s.store.SessionByID(ctx, id)
-		if err != nil {
-			return err
-		}
-		return s.start(value, ctx)
+		_, err := s.startCurrent(ctx, id)
+		return err
 	})
+}
+
+// startCurrent reports stale when the control row itself was deleted or is no
+// longer running. Errors from preparation are never classified as stale.
+func (s *Supervisor) startCurrent(ctx context.Context, id uuid.UUID) (stale bool, err error) {
+	s.mu.Lock()
+	_, exists := s.workers[id]
+	s.mu.Unlock()
+	if exists {
+		return false, nil
+	}
+	value, err := s.store.SessionByID(ctx, id)
+	if err != nil {
+		return errors.Is(err, session.ErrNotFound) || errors.Is(err, session.ErrNotRunning), err
+	}
+	if value.Status != session.StatusRunning {
+		return true, session.ErrNotRunning
+	}
+	return false, s.start(value, ctx)
 }
 
 func (s *Supervisor) start(value session.Session, ctx context.Context) error {

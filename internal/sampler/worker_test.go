@@ -276,6 +276,8 @@ type fakeSessionStore struct {
 	saveErr, sessionErr, ipsErr       error
 	ipsStarted, ipsRelease            chan struct{}
 	ipsStartOnce                      sync.Once
+	runningStarted, runningRelease    chan struct{}
+	runningStartOnce                  sync.Once
 	saveCount, stopCount, finishCount atomic.Int64
 }
 
@@ -301,12 +303,18 @@ func (s *fakeSessionStore) SessionByID(_ context.Context, id uuid.UUID) (session
 }
 func (s *fakeSessionStore) RunningSessions(context.Context) ([]session.Session, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	var result []session.Session
 	for _, v := range s.sessions {
 		if v.Status == session.StatusRunning {
 			result = append(result, v)
 		}
+	}
+	s.mu.Unlock()
+	if s.runningStarted != nil {
+		s.runningStartOnce.Do(func() { close(s.runningStarted) })
+	}
+	if s.runningRelease != nil {
+		<-s.runningRelease
 	}
 	return result, nil
 }
