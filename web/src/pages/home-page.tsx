@@ -13,7 +13,7 @@ export function HomePage({ onNewSession }: { onNewSession: () => void }) {
   if (sessions.isPending) return <SessionSkeleton />
   if (sessions.isError) {
     return (
-      <main className="home-page no-page-overflow">
+      <main className="home-page">
         <Alert className="error-state">
           <AlertTriangle aria-hidden="true" size={18} />
           <div><strong>Sessions are unavailable</strong><p>{sessions.error.message}</p></div>
@@ -28,7 +28,7 @@ export function HomePage({ onNewSession }: { onNewSession: () => void }) {
   const stoppingID = stop.isPending ? stop.variables : undefined
 
   return (
-    <main className="home-page no-page-overflow">
+    <main className="home-page">
       {stop.isError && (
         <Alert className="inline-alert">
           <AlertTriangle aria-hidden="true" size={18} />
@@ -44,8 +44,8 @@ export function HomePage({ onNewSession }: { onNewSession: () => void }) {
       ) : (
         <div className="session-sections">
           <h1 className="sr-only">Sampling sessions</h1>
-          <SessionTable id="active-sessions" title="Active sessions" sessions={active} stoppingID={stoppingID} onStop={(session) => stop.mutate(session.id)} />
-          <SessionTable id="inactive-sessions" title="Stopped / Finished sessions" sessions={inactive} stoppingID={stoppingID} onStop={(session) => stop.mutate(session.id)} />
+          <SessionTable id="active-sessions" title="Active sessions" emptyMessage="No sessions are currently running." sessions={active} stoppingID={stoppingID} onStop={(session) => stop.mutate(session.id)} />
+          <SessionTable id="inactive-sessions" title="Stopped / Finished sessions" emptyMessage="Stopped and finished sessions will appear here." sessions={inactive} stoppingID={stoppingID} onStop={(session) => stop.mutate(session.id)} />
         </div>
       )}
     </main>
@@ -54,7 +54,7 @@ export function HomePage({ onNewSession }: { onNewSession: () => void }) {
 
 function SessionSkeleton() {
   return (
-    <main className="home-page no-page-overflow" role="status" aria-label="Loading sessions">
+    <main className="home-page" role="status" aria-label="Loading sessions">
       <span className="sr-only">Loading sessions</span>
       <div className="skeleton-heading"><Skeleton /><Skeleton /></div>
       <div className="skeleton-list">

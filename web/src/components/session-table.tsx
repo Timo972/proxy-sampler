@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 interface SessionTableProps {
   id: string
   title: string
+  emptyMessage: string
   sessions: Session[]
   stoppingID?: string
   onStop: (session: Session) => void
@@ -18,7 +19,7 @@ interface SessionTableProps {
 
 const columns = ['Name', 'Proxy', 'Mode', 'Status', 'Success rate', 'Median RTT', 'Distinct IPs', 'Last IP / category', 'Last sample']
 
-export function SessionTable({ id, title, sessions, stoppingID, onStop }: SessionTableProps) {
+export function SessionTable({ id, title, emptyMessage, sessions, stoppingID, onStop }: SessionTableProps) {
   const navigate = useNavigate()
   const open = (session: Session) => navigate(`/sessions/${session.id}`)
   const stop = (event: MouseEvent, session: Session) => {
@@ -32,72 +33,74 @@ export function SessionTable({ id, title, sessions, stoppingID, onStop }: Sessio
         <h2 id={id}>{title}</h2>
         <span className="section-count" aria-label={`${sessions.length} sessions`}>{sessions.length}</span>
       </div>
-      <div className="session-table-wrap">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              {columns.map((column) => <TableHead key={column}>{column}</TableHead>)}
-              <TableHead><span className="sr-only">Actions</span></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {sessions.map((session) => (
-              <TableRow
-                key={session.id}
-                className="session-row"
-                onClick={() => open(session)}
-              >
-                <TableCell><Link className="session-link" to={`/sessions/${session.id}`} onClick={(event) => event.stopPropagation()}><strong>{session.name}</strong></Link></TableCell>
-                <TableCell className="mono">{session.proxy_display}</TableCell>
-                <TableCell className="capitalize">{session.mode}</TableCell>
-                <TableCell><SessionStatusBadge status={session.status} /></TableCell>
-                <TableCell className="numeric">{formatPercent(session.success_rate)}</TableCell>
-                <TableCell className="numeric">{formatMilliseconds(session.last_rtt_ms)}</TableCell>
-                <TableCell className="numeric">{session.distinct_ips}</TableCell>
-                <TableCell className="mono compact-cell">{formatLastIP(session.last_primary_ip, session.last_primary_category)}</TableCell>
-                <TableCell>{formatTimestamp(session.last_sample_at)}</TableCell>
-                <TableCell className="row-action">
-                  {session.status === 'running' && (
-                    <Button
-                      type="button"
-                      variant="quiet"
-                      size="icon"
-                      aria-label={`Stop ${session.name}`}
-                      disabled={stoppingID === session.id}
-                      onClick={(event) => stop(event, session)}
-                    ><Square aria-hidden="true" size={15} /></Button>
-                  )}
-                </TableCell>
+      {sessions.length === 0 ? <p className="section-empty">{emptyMessage}</p> : <>
+        <div className="session-table-wrap">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {columns.map((column) => <TableHead key={column}>{column}</TableHead>)}
+                <TableHead><span className="sr-only">Actions</span></TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-      <div className="session-records">
-        {sessions.map((session) => (
-          <article className="session-record" key={session.id}>
-            <div className="record-heading">
-              <Link className="record-title" to={`/sessions/${session.id}`}>{session.name}</Link>
-              <SessionStatusBadge status={session.status} />
-            </div>
-            <dl>
-              <Record label="Proxy" value={session.proxy_display} mono />
-              <Record label="Mode" value={session.mode} />
-              <Record label="Status" value={session.status} />
-              <Record label="Success rate" value={formatPercent(session.success_rate)} />
-              <Record label="Median RTT" value={formatMilliseconds(session.last_rtt_ms)} />
-              <Record label="Distinct IPs" value={String(session.distinct_ips)} />
-              <Record label="Last IP / category" value={formatLastIP(session.last_primary_ip, session.last_primary_category)} mono />
-              <Record label="Last sample" value={formatTimestamp(session.last_sample_at)} />
-            </dl>
-            {session.status === 'running' && (
-              <Button type="button" variant="secondary" disabled={stoppingID === session.id} onClick={(event) => stop(event, session)}>
-                <Square aria-hidden="true" size={15} /> Stop session
-              </Button>
-            )}
-          </article>
-        ))}
-      </div>
+            </TableHeader>
+            <TableBody>
+              {sessions.map((session) => (
+                <TableRow
+                  key={session.id}
+                  className="session-row"
+                  onClick={() => open(session)}
+                >
+                  <TableCell><Link className="session-link" to={`/sessions/${session.id}`} onClick={(event) => event.stopPropagation()}><strong>{session.name}</strong></Link></TableCell>
+                  <TableCell className="mono">{session.proxy_display}</TableCell>
+                  <TableCell className="capitalize">{session.mode}</TableCell>
+                  <TableCell><SessionStatusBadge status={session.status} /></TableCell>
+                  <TableCell className="numeric">{formatPercent(session.success_rate)}</TableCell>
+                  <TableCell className="numeric">{formatMilliseconds(session.last_rtt_ms)}</TableCell>
+                  <TableCell className="numeric">{session.distinct_ips}</TableCell>
+                  <TableCell className="mono compact-cell">{formatLastIP(session.last_primary_ip, session.last_primary_category)}</TableCell>
+                  <TableCell>{formatTimestamp(session.last_sample_at)}</TableCell>
+                  <TableCell className="row-action">
+                    {session.status === 'running' && (
+                      <Button
+                        type="button"
+                        variant="quiet"
+                        size="icon"
+                        aria-label={`Stop ${session.name}`}
+                        disabled={stoppingID === session.id}
+                        onClick={(event) => stop(event, session)}
+                      ><Square aria-hidden="true" size={15} /></Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+        <div className="session-records">
+          {sessions.map((session) => (
+            <article className="session-record" key={session.id}>
+              <div className="record-heading">
+                <Link className="record-title" to={`/sessions/${session.id}`}>{session.name}</Link>
+                <SessionStatusBadge status={session.status} />
+              </div>
+              <dl>
+                <Record label="Proxy" value={session.proxy_display} mono />
+                <Record label="Mode" value={session.mode} />
+                <Record label="Status" value={session.status} />
+                <Record label="Success rate" value={formatPercent(session.success_rate)} />
+                <Record label="Median RTT" value={formatMilliseconds(session.last_rtt_ms)} />
+                <Record label="Distinct IPs" value={String(session.distinct_ips)} />
+                <Record label="Last IP / category" value={formatLastIP(session.last_primary_ip, session.last_primary_category)} mono />
+                <Record label="Last sample" value={formatTimestamp(session.last_sample_at)} />
+              </dl>
+              {session.status === 'running' && (
+                <Button type="button" variant="secondary" disabled={stoppingID === session.id} onClick={(event) => stop(event, session)}>
+                  <Square aria-hidden="true" size={15} /> Stop session
+                </Button>
+              )}
+            </article>
+          ))}
+        </div>
+      </>}
     </section>
   )
 }

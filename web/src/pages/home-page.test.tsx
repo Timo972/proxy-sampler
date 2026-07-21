@@ -91,7 +91,7 @@ describe('HomePage', () => {
     expect(mobileRecords).not.toBeNull()
     const labels = Array.from(mobileRecords!.querySelectorAll('dt')).map((node) => node.textContent)
     expect(labels).toEqual(expect.arrayContaining(['Proxy', 'Mode', 'Status', 'Success rate', 'Median RTT', 'Distinct IPs', 'Last IP / category', 'Last sample']))
-    expect(container.querySelector('.home-page')).toHaveClass('no-page-overflow')
+    expect(container.querySelector('.home-page')).not.toHaveClass('no-page-overflow')
   })
 
   it('renders a newly created session when nullable sample fields are omitted', async () => {
@@ -100,6 +100,26 @@ describe('HomePage', () => {
 
     const row = await screen.findByRole('row', { name: /New no-sample session/i })
     expect(within(row).getAllByText('—')).toHaveLength(3)
+  })
+
+  it('explains when the active group is empty', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([stopped])))
+    renderHome()
+
+    const heading = await screen.findByRole('heading', { name: 'Active sessions' })
+    const section = heading.closest('section')!
+    expect(within(section).getByText('No sessions are currently running.')).toBeInTheDocument()
+    expect(within(section).queryByRole('table')).not.toBeInTheDocument()
+  })
+
+  it('explains when the stopped and finished group is empty', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([running])))
+    renderHome()
+
+    const heading = await screen.findByRole('heading', { name: 'Stopped / Finished sessions' })
+    const section = heading.closest('section')!
+    expect(within(section).getByText('Stopped and finished sessions will appear here.')).toBeInTheDocument()
+    expect(within(section).queryByRole('table')).not.toBeInTheDocument()
   })
 
   it('navigates from a row while stop remains a local row action', async () => {
