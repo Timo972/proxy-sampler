@@ -399,11 +399,6 @@ func TestControlRoutesAreRegisteredAtPublicPaths(t *testing.T) {
 	}
 }
 
-func TestReadyPlaceholderReturnsDeclaredInternalError(t *testing.T) {
-	response := request(t, testHandler(t, newMemoryStore(), &fakeControl{}), http.MethodGet, "/readyz", "")
-	assertAPIError(t, response, http.StatusInternalServerError, "internal_error")
-}
-
 func testHandler(t *testing.T, store session.Store, control Control) http.Handler {
 	t.Helper()
 	cipher, err := cryptox.New([]byte("0123456789abcdef0123456789abcdef"))

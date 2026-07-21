@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/timo972/proxy-sampler/internal/api/openapi"
+	"github.com/timo972/proxy-sampler/internal/ch"
 	cryptox "github.com/timo972/proxy-sampler/internal/crypto"
 	"github.com/timo972/proxy-sampler/internal/proxydial"
 	"github.com/timo972/proxy-sampler/internal/session"
@@ -47,19 +48,35 @@ type Server struct {
 	store    session.Store
 	control  Control
 	cipher   *cryptox.Cipher
+	reader   Reader
 	defaults Defaults
 	now      func() time.Time
 }
 
+// Reader supplies ClickHouse-backed report, sample, export, and readiness data.
+type Reader interface {
+	Ping(context.Context) error
+	Samples(context.Context, uuid.UUID, *time.Time, *time.Time, int) (ch.SamplePage, error)
+	StreamSamples(context.Context, uuid.UUID, *time.Time, *time.Time, func(ch.Event) error) error
+	Series(context.Context, uuid.UUID, time.Time, time.Time, time.Duration) ([]ch.SeriesPoint, error)
+	Stickiness(context.Context, uuid.UUID, time.Time, time.Time) (ch.Stickiness, error)
+	PoolGrowth(context.Context, uuid.UUID, time.Time, time.Time) ([]ch.GrowthPoint, error)
+}
+
 // NewServer constructs the session control API.
-func NewServer(store session.Store, control Control, cipher *cryptox.Cipher, defaults Defaults) *Server {
+// The optional reader preserves compatibility for control-only construction.
+func NewServer(store session.Store, control Control, cipher *cryptox.Cipher, defaults Defaults, readers ...Reader) *Server {
 	if defaults.ProbeTarget == "" {
 		defaults.ProbeTarget = defaultProbeTarget
 	}
 	if defaults.DialTimeout == 0 {
 		defaults.DialTimeout = defaultDialTimeout
 	}
-	return &Server{store: store, control: control, cipher: cipher, defaults: defaults, now: time.Now}
+	var reader Reader
+	if len(readers) > 0 {
+		reader = readers[0]
+	}
+	return &Server{store: store, control: control, cipher: cipher, reader: reader, defaults: defaults, now: time.Now}
 }
 
 // Handler registers generated paths directly on a root chi router.
@@ -342,28 +359,6 @@ func durationMillis(value *time.Duration) *int {
 	}
 	result := int(*value / time.Millisecond)
 	return &result
-}
-
-// Task 10 supplies report, sample, export, and health implementations. These
-// strict-interface placeholders intentionally expose no behavior in Task 9.
-func (s *Server) ExportSessionCSV(context.Context, openapi.ExportSessionCSVRequestObject) (openapi.ExportSessionCSVResponseObject, error) {
-	return nil, internalError()
-}
-
-func (s *Server) SessionReport(context.Context, openapi.SessionReportRequestObject) (openapi.SessionReportResponseObject, error) {
-	return nil, internalError()
-}
-
-func (s *Server) SessionSamples(context.Context, openapi.SessionSamplesRequestObject) (openapi.SessionSamplesResponseObject, error) {
-	return nil, internalError()
-}
-
-func (s *Server) Healthz(context.Context, openapi.HealthzRequestObject) (openapi.HealthzResponseObject, error) {
-	return nil, internalError()
-}
-
-func (s *Server) Readyz(context.Context, openapi.ReadyzRequestObject) (openapi.ReadyzResponseObject, error) {
-	return openapi.Readyz500JSONResponse{InternalErrorJSONResponse: internalErrorJSON()}, nil
 }
 
 var _ openapi.StrictServerInterface = (*Server)(nil)

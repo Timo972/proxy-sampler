@@ -25,6 +25,11 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool, q: New(pool)}
 }
 
+// Ping verifies the store's Postgres connection for readiness checks.
+func (s *Store) Ping(ctx context.Context) error {
+	return s.pool.Ping(ctx)
+}
+
 func (s *Store) Create(ctx context.Context, value session.Session) (session.Session, error) {
 	if err := s.q.InsertSession(ctx, insertSessionParams(value)); err != nil {
 		return session.Session{}, fmt.Errorf("insert session: %w", err)
