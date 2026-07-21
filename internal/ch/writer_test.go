@@ -79,6 +79,27 @@ func TestWriterNormalizesMissingIPsAndRejectsMismatchedProbeArrays(t *testing.T)
 	}
 }
 
+func TestWriterNormalizesZeroLengthIPs(t *testing.T) {
+	opener := &fakeOpener{}
+	w := newWriter(opener, nil, writerConfig{BatchSize: 1, FlushInterval: time.Hour, QueueCapacity: 8}, discardLogger())
+	t.Cleanup(func() { closeWriter(t, w) })
+
+	event := testEvent(1)
+	event.PrimaryIP = net.IP{}
+	event.ProbeIPs[0] = net.IP{}
+	if !w.Enqueue(event) {
+		t.Fatal("event rejected")
+	}
+	opener.waitForSends(t, 1)
+	row := opener.batchesSnapshot()[0].rows[0]
+	if got := row[5].(net.IP); !got.Equal(net.IPv6zero) {
+		t.Fatalf("primary ip = %v, want IPv6 zero", got)
+	}
+	if got := row[15].([]net.IP)[0]; !got.Equal(net.IPv6zero) {
+		t.Fatalf("probe ip = %v, want IPv6 zero", got)
+	}
+}
+
 func TestWriterFlushesOnInterval(t *testing.T) {
 	opener := &fakeOpener{}
 	w := newWriter(opener, nil, writerConfig{BatchSize: 100, FlushInterval: 10 * time.Millisecond, QueueCapacity: 8}, discardLogger())
@@ -111,6 +132,44 @@ func TestWriterQueueFullDropsWithoutBlocking(t *testing.T) {
 	}
 	if got := w.Dropped(); got != 1 {
 		t.Fatalf("Dropped = %d, want 1", got)
+	}
+	close(gate)
+	closeWriter(t, w)
+}
+
+func TestWriterQueueFullDoesNotWaitForLogger(t *testing.T) {
+	gate := make(chan struct{})
+	opener := &fakeOpener{openGate: gate}
+	handler := &blockingHandler{entered: make(chan struct{}), release: make(chan struct{})}
+	w := newWriter(opener, nil, writerConfig{BatchSize: 1, FlushInterval: time.Hour, QueueCapacity: 1}, slog.New(handler))
+	if !w.Enqueue(testEvent(1)) {
+		t.Fatal("first enqueue rejected")
+	}
+	opener.waitForOpens(t, 1)
+	if !w.Enqueue(testEvent(2)) {
+		t.Fatal("second enqueue rejected")
+	}
+
+	enqueueDone := make(chan bool, 1)
+	go func() { enqueueDone <- w.Enqueue(testEvent(3)) }()
+	select {
+	case <-handler.entered:
+	case <-time.After(time.Second):
+		t.Fatal("queue-full warning did not reach logger")
+	}
+	returned := false
+	select {
+	case accepted := <-enqueueDone:
+		returned = true
+		if accepted {
+			t.Error("queue-full event was accepted")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("queue-full Enqueue waited for the logger")
+	}
+	close(handler.release)
+	if !returned && <-enqueueDone {
+		t.Error("queue-full event was accepted after logger release")
 	}
 	close(gate)
 	closeWriter(t, w)
@@ -221,6 +280,55 @@ func TestWriterCloseHonorsContextWhileFlushIsBlocked(t *testing.T) {
 	defer cancel2()
 	if err := w.Close(ctx2); err != nil {
 		t.Fatalf("second Close: %v", err)
+	}
+}
+
+func TestWriterCloseHonorsContextWhileFlushWaitsOnFullQueue(t *testing.T) {
+	gate := make(chan struct{})
+	opener := &fakeOpener{openGate: gate}
+	w := newWriter(opener, nil, writerConfig{BatchSize: 1, FlushInterval: time.Hour, QueueCapacity: 1}, discardLogger())
+	if !w.Enqueue(testEvent(1)) {
+		t.Fatal("first enqueue rejected")
+	}
+	opener.waitForOpens(t, 1)
+	if !w.Enqueue(testEvent(2)) {
+		t.Fatal("second enqueue rejected")
+	}
+
+	flushCtx, cancelFlush := context.WithCancel(context.Background())
+	flushDone := make(chan error, 1)
+	go func() { flushDone <- w.Flush(flushCtx) }()
+	deadline := time.Now().Add(time.Second)
+	for w.stateMu.TryLock() {
+		w.stateMu.Unlock()
+		if time.Now().After(deadline) {
+			cancelFlush()
+			close(gate)
+			t.Fatal("Flush did not acquire the writer state lock")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	ctx, cancelClose := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelClose()
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- w.Close(ctx) }()
+	select {
+	case err := <-closeDone:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Close error = %v, want deadline exceeded", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Close did not honor its deadline while Flush held the state lock")
+	}
+
+	cancelFlush()
+	close(gate)
+	<-flushDone
+	ctx2, cancelClose2 := context.WithTimeout(context.Background(), time.Second)
+	defer cancelClose2()
+	if err := w.Close(ctx2); err != nil {
+		t.Fatalf("eventual Close: %v", err)
 	}
 }
 
@@ -351,6 +459,21 @@ func (b *fakeBatch) Abort() error { b.aborts <- struct{}{}; return nil }
 type fakeCloser struct{ calls int }
 
 func (c *fakeCloser) Close() error { c.calls++; return nil }
+
+type blockingHandler struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (h *blockingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *blockingHandler) Handle(context.Context, slog.Record) error {
+	h.once.Do(func() { close(h.entered) })
+	<-h.release
+	return nil
+}
+func (h *blockingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *blockingHandler) WithGroup(string) slog.Handler      { return h }
 
 func assertArgs(t *testing.T, got, want []any) {
 	t.Helper()

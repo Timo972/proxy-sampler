@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"sort"
 	"strings"
@@ -22,6 +23,8 @@ var (
 	ErrInvalidRange = errors.New("invalid time range")
 	// ErrInvalidBucket means a series bucket is non-positive.
 	ErrInvalidBucket = errors.New("invalid series bucket")
+	// ErrInvalidPage means a sample page would produce an invalid offset.
+	ErrInvalidPage = errors.New("invalid sample page")
 )
 
 const eventColumns = `session_id, sampled_at, sample_seq, probes_attempted, probes_ok,
@@ -76,6 +79,10 @@ func (r *Reader) Samples(ctx context.Context, sessionID uuid.UUID, from, to *tim
 	if page < 1 {
 		page = 1
 	}
+	offset, err := checkedPageOffset(page)
+	if err != nil {
+		return SamplePage{}, err
+	}
 	where, args := sampleWhere(sessionID, from, to)
 	result := SamplePage{Page: page, PageSize: samplePageSize, Items: []Event{}}
 	if err := r.conn.QueryRow(ctx, "SELECT count() FROM sample_events "+where, args...).Scan(&result.Total); err != nil {
@@ -83,7 +90,7 @@ func (r *Reader) Samples(ctx context.Context, sessionID uuid.UUID, from, to *tim
 	}
 	query := "SELECT " + eventColumns + " FROM sample_events " + where +
 		" ORDER BY sampled_at DESC, sample_seq DESC LIMIT ? OFFSET ?"
-	args = append(args, samplePageSize, (page-1)*samplePageSize)
+	args = append(args, samplePageSize, offset)
 	rows, err := r.conn.Query(ctx, query, args...)
 	if err != nil {
 		return SamplePage{}, fmt.Errorf("query samples: %w", err)
@@ -100,6 +107,14 @@ func (r *Reader) Samples(ctx context.Context, sessionID uuid.UUID, from, to *tim
 		return SamplePage{}, fmt.Errorf("iterate samples: %w", err)
 	}
 	return result, nil
+}
+
+func checkedPageOffset(page int) (int64, error) {
+	index := uint64(page - 1)
+	if index > uint64(math.MaxInt64)/uint64(samplePageSize) {
+		return 0, ErrInvalidPage
+	}
+	return int64(index * uint64(samplePageSize)), nil
 }
 
 // StreamSamples visits all filtered samples in chronological order.

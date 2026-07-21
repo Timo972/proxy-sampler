@@ -33,6 +33,14 @@ func TestReaderRejectsInvalidRangesAndBucket(t *testing.T) {
 	}
 }
 
+func TestReaderRejectsHugePageBeforeQuery(t *testing.T) {
+	r := &Reader{}
+	_, err := r.Samples(context.Background(), uuid.New(), nil, nil, math.MaxInt)
+	if !errors.Is(err, ErrInvalidPage) {
+		t.Fatalf("Samples huge page error = %v, want ErrInvalidPage", err)
+	}
+}
+
 func TestReaderReportsAndDeletion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

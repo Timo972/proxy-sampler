@@ -76,10 +76,12 @@ type Writer struct {
 	accepting bool
 	closeOnce sync.Once
 	closeErr  error
+	closing   atomic.Bool
 
 	dropped     atomic.Int64
 	flushErrors atomic.Int64
 	lastDropLog atomic.Int64
+	dropLogBusy atomic.Bool
 }
 
 // NewWriter opens, pings, and owns a ClickHouse connection.
@@ -128,9 +130,12 @@ func (w *Writer) Enqueue(event Event) bool {
 	if !validEvent(event) {
 		return false
 	}
+	if w.closing.Load() {
+		return false
+	}
 	w.stateMu.RLock()
 	defer w.stateMu.RUnlock()
-	if !w.accepting {
+	if !w.accepting || w.closing.Load() {
 		return false
 	}
 	select {
@@ -138,7 +143,7 @@ func (w *Writer) Enqueue(event Event) bool {
 		return true
 	default:
 		w.dropped.Add(1)
-		w.maybeLogDrop()
+		w.scheduleDropLog()
 		return false
 	}
 }
@@ -153,8 +158,11 @@ func (w *Writer) FlushErrors() int64 { return w.flushErrors.Load() }
 // Callers must first stop and wait for all event producers.
 func (w *Writer) Flush(ctx context.Context) error {
 	barrier := make(chan error, 1)
+	if w.closing.Load() {
+		return errWriterClosed
+	}
 	w.stateMu.RLock()
-	if !w.accepting {
+	if !w.accepting || w.closing.Load() {
 		w.stateMu.RUnlock()
 		return errWriterClosed
 	}
@@ -177,10 +185,8 @@ func (w *Writer) Flush(ctx context.Context) error {
 // owned connection. Every call is bounded by its own context.
 func (w *Writer) Close(ctx context.Context) error {
 	w.closeOnce.Do(func() {
-		w.stateMu.Lock()
-		w.accepting = false
-		close(w.commands)
-		w.stateMu.Unlock()
+		w.closing.Store(true)
+		go w.initiateClose()
 	})
 	select {
 	case <-w.done:
@@ -188,6 +194,13 @@ func (w *Writer) Close(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (w *Writer) initiateClose() {
+	w.stateMu.Lock()
+	w.accepting = false
+	close(w.commands)
+	w.stateMu.Unlock()
 }
 
 func (w *Writer) run() {
@@ -264,12 +277,22 @@ func (w *Writer) recordFlushError(operation string, count int, err error) {
 	w.logger.Warn("clickhouse sample batch failed", "operation", operation, "count", count, "err", err)
 }
 
-func (w *Writer) maybeLogDrop() {
+func (w *Writer) scheduleDropLog() {
+	if w.dropLogBusy.Load() {
+		return
+	}
 	now := time.Now().UnixNano()
 	last := w.lastDropLog.Load()
-	if now-last >= int64(dropLogInterval) && w.lastDropLog.CompareAndSwap(last, now) {
-		w.logger.Warn("clickhouse sample queue full; dropping event", "dropped_total", w.dropped.Load())
+	if now-last < int64(dropLogInterval) || !w.lastDropLog.CompareAndSwap(last, now) {
+		return
 	}
+	if !w.dropLogBusy.CompareAndSwap(false, true) {
+		return
+	}
+	go func(dropped int64) {
+		defer w.dropLogBusy.Store(false)
+		w.logger.Warn("clickhouse sample queue full; dropping event", "dropped_total", dropped)
+	}(w.dropped.Load())
 }
 
 func validEvent(event Event) bool {
@@ -297,7 +320,7 @@ func appendArgs(batch batchSink, event Event) error {
 }
 
 func normalizedIP(ip net.IP) net.IP {
-	if ip == nil {
+	if len(ip) == 0 {
 		return append(net.IP(nil), net.IPv6zero...)
 	}
 	return append(net.IP(nil), ip...)
