@@ -80,13 +80,12 @@ func TestDNSBLRateLimitAnswerIsAnErrorNotAListing(t *testing.T) {
 		return []string{"127.255.255.1"}, nil
 	}}
 	provider := NewDNSBL(resolver)
-	provider.zones = []string{"zen.spamhaus.org"}
+	provider.zones = []string{"zen.spamhaus.org", "zone-ratelimited.test"}
 	partial, err := provider.Lookup(context.Background(), providerTestIP)
-	if err == nil || !strings.Contains(err.Error(), "ratelimit") {
+	if err == nil || !strings.Contains(err.Error(), "zen.spamhaus.org") || !strings.Contains(err.Error(), "zone-ratelimited.test") {
 		t.Fatalf("error = %v", err)
 	}
-	assertBoolPointer(t, "DNSBLListed", partial.DNSBLListed, false)
-	if len(partial.DNSBLHits) != 0 || partial.HadSignal {
+	if partial.DNSBLListed != nil || len(partial.DNSBLHits) != 0 || partial.HadSignal {
 		t.Fatalf("partial=%#v", partial)
 	}
 }
@@ -102,8 +101,43 @@ func TestDNSBLRejectsNonIPv4ResolverAnswer(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "invalid answer") {
 		t.Fatalf("error = %v", err)
 	}
+	if partial.DNSBLListed != nil || partial.HadSignal || len(partial.DNSBLHits) != 0 {
+		t.Fatalf("partial=%#v", partial)
+	}
+}
+
+func TestDNSBLAllZoneErrorsLeaveListingUnknown(t *testing.T) {
+	t.Parallel()
+	resolver := &fakeHostResolver{lookup: func(string) ([]string, error) {
+		return nil, errors.New("resolver unavailable")
+	}}
+	provider := NewDNSBL(resolver)
+	provider.zones = []string{"zone-a.test", "zone-b.test"}
+	partial, err := provider.Lookup(context.Background(), providerTestIP)
+	if err == nil || !strings.Contains(err.Error(), "zone-a.test") || !strings.Contains(err.Error(), "zone-b.test") {
+		t.Fatalf("error = %v", err)
+	}
+	if partial.DNSBLListed != nil || partial.HadSignal || len(partial.DNSBLHits) != 0 {
+		t.Fatalf("all failures must leave listing unknown: %#v", partial)
+	}
+}
+
+func TestDNSBLNXDOMAINPlusErrorIsAuthoritativeNotListed(t *testing.T) {
+	t.Parallel()
+	resolver := &fakeHostResolver{lookup: func(host string) ([]string, error) {
+		if strings.HasSuffix(host, ".zone-none.test") {
+			return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+		}
+		return nil, errors.New("resolver unavailable")
+	}}
+	provider := NewDNSBL(resolver)
+	provider.zones = []string{"zone-error.test", "zone-none.test"}
+	partial, err := provider.Lookup(context.Background(), providerTestIP)
+	if err == nil || !strings.Contains(err.Error(), "zone-error.test") {
+		t.Fatalf("error = %v", err)
+	}
 	assertBoolPointer(t, "DNSBLListed", partial.DNSBLListed, false)
-	if partial.HadSignal || len(partial.DNSBLHits) != 0 {
+	if !partial.HadSignal || len(partial.DNSBLHits) != 0 {
 		t.Fatalf("partial=%#v", partial)
 	}
 }

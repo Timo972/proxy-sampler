@@ -72,7 +72,7 @@ func providerHTTPClient(client *http.Client) *http.Client {
 func providerGET(ctx context.Context, client *http.Client, provider, requestURL string, headers http.Header) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%s: build request: %w", provider, err)
+		return nil, fmt.Errorf("%s: build request", provider)
 	}
 	for key, values := range headers {
 		for _, value := range values {
@@ -81,7 +81,7 @@ func providerGET(ctx context.Context, client *http.Client, provider, requestURL 
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("%s: request failed: %w", provider, err)
+		return nil, &providerRequestError{provider: provider, cause: err}
 	}
 	defer response.Body.Close()
 
@@ -104,3 +104,12 @@ func providerGET(ctx context.Context, client *http.Client, provider, requestURL 
 	}
 	return body, nil
 }
+
+type providerRequestError struct {
+	provider string
+	cause    error
+}
+
+func (e *providerRequestError) Error() string { return e.provider + ": request failed" }
+
+func (e *providerRequestError) Unwrap() error { return e.cause }

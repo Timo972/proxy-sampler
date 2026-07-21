@@ -3,6 +3,7 @@ package enrich
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -149,6 +150,26 @@ func TestStopForumSpamLookupParsesPayloadAndBuildsRequest(t *testing.T) {
 	}
 }
 
+func TestStopForumSpamMissingFieldsAreNotAuthoritativeSignals(t *testing.T) {
+	t.Parallel()
+	payload := `{"success":1,"ip":{}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	t.Cleanup(server.Close)
+	provider := NewStopForumSpam(server.Client())
+	provider.baseURL = server.URL
+
+	partial, err := provider.Lookup(context.Background(), providerTestIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partial.SFSAppears != nil || partial.SFSFrequency != nil || partial.HadSignal {
+		t.Fatalf("missing fields became authoritative values: %#v", partial)
+	}
+	assertRawPayload(t, partial, "stopforumspam", payload)
+}
+
 func TestProvidersRejectUnsuccessfulProviderStatus(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -215,6 +236,46 @@ func TestProviderHTTPErrorUsesBoundedExcerpt(t *testing.T) {
 	if strings.Contains(err.Error(), tail) || len(err.Error()) > 400 {
 		t.Fatalf("error is not safely bounded: len=%d error=%q", len(err.Error()), err)
 	}
+}
+
+func TestProviderRejectsOversizedSuccessfulBody(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", maxProviderBody+1)))
+	}))
+	t.Cleanup(server.Close)
+	provider := NewIPAPI(server.Client())
+	provider.baseURL = server.URL + "/"
+
+	_, err := provider.Lookup(context.Background(), providerTestIP)
+	if err == nil || !strings.Contains(err.Error(), "response exceeds") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestProviderRequestErrorDoesNotExposeURLOrCredentials(t *testing.T) {
+	t.Parallel()
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("dial %s", request.URL.String())
+	})}
+	provider := NewIPAPI(client)
+	provider.baseURL = "http://provider-user:provider-password@provider.example/private/"
+
+	_, err := provider.Lookup(context.Background(), providerTestIP)
+	if err == nil {
+		t.Fatal("expected request failure")
+	}
+	for _, secret := range []string{"provider.example", "provider-user", "provider-password", "/private/"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("error exposed request URL or credentials: %q", err)
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
 }
 
 func assertRawPayload(t *testing.T, partial Partial, provider, want string) {

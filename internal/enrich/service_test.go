@@ -41,8 +41,9 @@ func TestServiceFreshCacheBypassesProvidersAndSave(t *testing.T) {
 func TestServiceStaleCacheRefreshesAndSaves(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	firstSeen := now.Add(-7 * 24 * time.Hour)
 	store := &serviceFakeStore{
-		cached: session.Reputation{IP: providerTestIP, Country: "old", RefreshedAt: now.Add(-25 * time.Hour)},
+		cached: session.Reputation{IP: providerTestIP, Country: "old", FirstSeen: firstSeen, RefreshedAt: now.Add(-25 * time.Hour)},
 		found:  true,
 	}
 	provider := &serviceFakeProvider{name: "geo", partial: Partial{Country: "new", HadSignal: true}}
@@ -52,8 +53,11 @@ func TestServiceStaleCacheRefreshesAndSaves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if provider.calls.Load() != 1 || store.saveCalls() != 1 || got.Country != "new" || !got.RefreshedAt.Equal(now) {
+	if provider.calls.Load() != 1 || store.saveCalls() != 1 || got.Country != "new" || !got.RefreshedAt.Equal(now) || !got.FirstSeen.Equal(firstSeen) {
 		t.Fatalf("calls=%d saves=%d reputation=%#v", provider.calls.Load(), store.saveCalls(), got)
+	}
+	if saved := store.lastSaved(); !saved.FirstSeen.Equal(firstSeen) {
+		t.Fatalf("saved FirstSeen = %v, want %v", saved.FirstSeen, firstSeen)
 	}
 }
 
@@ -124,9 +128,15 @@ func TestServiceProviderErrorStillSavesMergedFieldsAndClassification(t *testing.
 	if got.ASN != "AS62633 HostRush" || got.RiskScore == nil || *got.RiskScore != 88 || got.Category != CategoryDatacenter {
 		t.Fatalf("reputation=%#v", got)
 	}
+	if !got.FirstSeen.Equal(now) || !got.RefreshedAt.Equal(now) {
+		t.Fatalf("new miss timestamps = FirstSeen %v RefreshedAt %v, want %v", got.FirstSeen, got.RefreshedAt, now)
+	}
 	saved := store.lastSaved()
 	if saved.ASN != got.ASN || saved.Category != CategoryDatacenter || saved.RiskScore == nil || *saved.RiskScore != 88 {
 		t.Fatalf("saved=%#v", saved)
+	}
+	if !saved.FirstSeen.Equal(now) || !saved.RefreshedAt.Equal(now) {
+		t.Fatalf("saved new-miss timestamps = FirstSeen %v RefreshedAt %v, want %v", saved.FirstSeen, saved.RefreshedAt, now)
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(saved.Raw, &raw); err != nil || len(raw) != 2 {
@@ -142,6 +152,45 @@ func TestServiceCacheReadFailureAbortsBeforeQuotaOrSave(t *testing.T) {
 
 	_, err := service.Lookup(context.Background(), providerTestIP)
 	if err == nil || !strings.Contains(err.Error(), "database unavailable") {
+		t.Fatalf("error = %v", err)
+	}
+	if provider.calls.Load() != 0 || store.saveCalls() != 0 {
+		t.Fatalf("provider calls=%d save calls=%d", provider.calls.Load(), store.saveCalls())
+	}
+}
+
+func TestServiceSaveFailureJoinsProviderErrorAndReleasesSemaphore(t *testing.T) {
+	t.Parallel()
+	store := &serviceFakeStore{saveErr: errors.New("database write failed")}
+	provider := &serviceFakeProvider{name: "risk", err: errors.New("quota exhausted")}
+	sem := semaphore.NewWeighted(1)
+	service := newTestService(t, store, []Provider{provider}, time.Hour, sem, time.Now())
+
+	_, err := service.Lookup(context.Background(), providerTestIP)
+	if err == nil || !strings.Contains(err.Error(), "risk: quota exhausted") || !strings.Contains(err.Error(), "save reputation: database write failed") {
+		t.Fatalf("joined error = %v", err)
+	}
+	if !sem.TryAcquire(1) {
+		t.Fatal("service did not release semaphore after save failure")
+	}
+	sem.Release(1)
+}
+
+func TestServiceCanceledSemaphoreAcquireDoesNoProviderOrSaveWork(t *testing.T) {
+	t.Parallel()
+	store := &serviceFakeStore{}
+	provider := &serviceFakeProvider{name: "never"}
+	sem := semaphore.NewWeighted(1)
+	if err := sem.Acquire(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
+	defer sem.Release(1)
+	service := newTestService(t, store, []Provider{provider}, time.Hour, sem, time.Now())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := service.Lookup(ctx, providerTestIP)
+	if err == nil || !strings.Contains(err.Error(), "acquire enrichment slot") {
 		t.Fatalf("error = %v", err)
 	}
 	if provider.calls.Load() != 0 || store.saveCalls() != 0 {
@@ -195,6 +244,7 @@ type serviceFakeStore struct {
 	cached    session.Reputation
 	found     bool
 	lookupErr error
+	saveErr   error
 	saved     []session.Reputation
 }
 
@@ -205,6 +255,9 @@ func (s *serviceFakeStore) ReputationByIP(context.Context, netip.Addr) (session.
 func (s *serviceFakeStore) SaveReputation(_ context.Context, reputation session.Reputation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.saveErr != nil {
+		return s.saveErr
+	}
 	s.saved = append(s.saved, reputation)
 	return nil
 }

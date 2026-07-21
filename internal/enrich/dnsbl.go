@@ -43,7 +43,7 @@ func (p *DNSBL) Lookup(ctx context.Context, ip netip.Addr) (Partial, error) {
 	}
 
 	listed := false
-	partial := Partial{DNSBLListed: &listed}
+	var partial Partial
 	var errs []error
 	reversed := reverseIPv4(ip)
 	for _, zone := range p.zones {
@@ -92,7 +92,9 @@ func (p *DNSBL) Lookup(ctx context.Context, ip netip.Addr) (Partial, error) {
 			partial.DNSBLHits = append(partial.DNSBLHits, zone)
 		}
 	}
-	partial.DNSBLListed = &listed
+	if partial.HadSignal {
+		partial.DNSBLListed = &listed
+	}
 	sort.Strings(partial.DNSBLHits)
 	return partial, errors.Join(errs...)
 }

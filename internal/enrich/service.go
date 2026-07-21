@@ -87,7 +87,11 @@ func (s *Service) Lookup(ctx context.Context, ip netip.Addr) (session.Reputation
 		errs = append(errs, err)
 	}
 	refreshedAt := s.now()
-	reputation := toReputation(ip, merged, Classify(merged), refreshedAt, raw)
+	firstSeen := refreshedAt
+	if ok {
+		firstSeen = cached.FirstSeen
+	}
+	reputation := toReputation(ip, merged, Classify(merged), firstSeen, refreshedAt, raw)
 	if err := s.store.SaveReputation(ctx, reputation); err != nil {
 		errs = append(errs, fmt.Errorf("save reputation: %w", err))
 		return session.Reputation{}, errors.Join(errs...)
@@ -106,7 +110,7 @@ func marshalProviderRaw(raw map[string]json.RawMessage) (json.RawMessage, error)
 	return encoded, nil
 }
 
-func toReputation(ip netip.Addr, partial Partial, category string, refreshedAt time.Time, raw json.RawMessage) session.Reputation {
+func toReputation(ip netip.Addr, partial Partial, category string, firstSeen, refreshedAt time.Time, raw json.RawMessage) session.Reputation {
 	return session.Reputation{
 		IP: ip, Country: partial.Country, Region: partial.Region, City: partial.City,
 		ISP: partial.ISP, ASN: partial.ASN, IsMobile: partial.IsMobile,
@@ -115,6 +119,6 @@ func toReputation(ip netip.Addr, partial Partial, category string, refreshedAt t
 		RiskScore: partial.RiskScore, GreyNoiseClass: partial.GreyNoiseClass,
 		SFSAppears: partial.SFSAppears, SFSFrequency: partial.SFSFrequency,
 		DNSBLListed: partial.DNSBLListed, DNSBLHits: append([]string(nil), partial.DNSBLHits...),
-		Category: category, Raw: raw, FirstSeen: refreshedAt, RefreshedAt: refreshedAt,
+		Category: category, Raw: raw, FirstSeen: firstSeen, RefreshedAt: refreshedAt,
 	}
 }

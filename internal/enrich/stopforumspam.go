@@ -25,7 +25,7 @@ func (p *StopForumSpam) Name() string { return "stopforumspam" }
 func (p *StopForumSpam) Lookup(ctx context.Context, ip netip.Addr) (Partial, error) {
 	requestURL, err := url.Parse(p.baseURL)
 	if err != nil {
-		return Partial{}, fmt.Errorf("%s: parse endpoint: %w", p.Name(), err)
+		return Partial{}, fmt.Errorf("%s: parse endpoint", p.Name())
 	}
 	query := requestURL.Query()
 	query.Set("ip", ip.String())
@@ -38,8 +38,8 @@ func (p *StopForumSpam) Lookup(ctx context.Context, ip netip.Addr) (Partial, err
 	var response struct {
 		Success int `json:"success"`
 		IP      struct {
-			Appears   int    `json:"appears"`
-			Frequency int    `json:"frequency"`
+			Appears   *int   `json:"appears"`
+			Frequency *int   `json:"frequency"`
 			LastSeen  string `json:"lastseen"`
 		} `json:"ip"`
 	}
@@ -49,10 +49,14 @@ func (p *StopForumSpam) Lookup(ctx context.Context, ip netip.Addr) (Partial, err
 	if response.Success != 1 {
 		return Partial{}, fmt.Errorf("%s: provider status unsuccessful", p.Name())
 	}
-	appears := response.IP.Appears != 0
-	frequency := response.IP.Frequency
+	var appears *bool
+	if response.IP.Appears != nil {
+		value := *response.IP.Appears != 0
+		appears = &value
+	}
 	return Partial{
-		SFSAppears: &appears, SFSFrequency: &frequency,
-		Raw: map[string]json.RawMessage{p.Name(): body}, HadSignal: true,
+		SFSAppears: appears, SFSFrequency: response.IP.Frequency,
+		Raw:       map[string]json.RawMessage{p.Name(): body},
+		HadSignal: appears != nil || response.IP.Frequency != nil,
 	}, nil
 }
