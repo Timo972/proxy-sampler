@@ -1,0 +1,12 @@
+# oapi-codegen config. Regenerate with `make openapi-generate`.
+package: openapi
+output: internal/api/openapi/openapi.gen.go
+generate:
+  models: true
+  chi-server: true
+  strict-server: true
+  embedded-spec: true
+compatibility:
+  always-prefix-enum-values: true
+output-options:
+  skip-prune: true
