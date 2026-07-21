@@ -151,6 +151,39 @@ func TestCreateSessionRejectsRuntimeSchemaViolations(t *testing.T) {
 	}
 }
 
+func TestCreateSessionEnforcesRequestBodyLimit(t *testing.T) {
+	const bodyLimit = 1 << 20
+	prefix := `{"name":"Boundary","proxy":"socks5://proxy.example:1080/`
+	suffix := `","mode":"sticky","cadence_seconds":10}`
+	bodyAtLimit := prefix + strings.Repeat("a", bodyLimit-len(prefix)-len(suffix)) + suffix
+	if len(bodyAtLimit) != bodyLimit {
+		t.Fatalf("boundary body length = %d, want %d", len(bodyAtLimit), bodyLimit)
+	}
+
+	t.Run("exact limit accepted and replayed", func(t *testing.T) {
+		store := newMemoryStore()
+		control := &fakeControl{}
+		response := request(t, testHandler(t, store, control), http.MethodPost, "/api/sessions", bodyAtLimit)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201; body=%s", response.Code, response.Body.String())
+		}
+		if len(store.sessions) != 1 || len(control.started) != 1 {
+			t.Fatalf("created/started = %d/%d, want 1/1", len(store.sessions), len(control.started))
+		}
+	})
+
+	t.Run("limit plus one rejected before encryption", func(t *testing.T) {
+		store := newMemoryStore()
+		control := &fakeControl{}
+		server := NewServer(store, control, nil, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second})
+		response := request(t, server.Handler(), http.MethodPost, "/api/sessions", bodyAtLimit+" ")
+		assertAPIError(t, response, http.StatusBadRequest, "invalid_request")
+		if len(store.sessions) != 0 || len(control.started) != 0 {
+			t.Fatalf("created/started = %d/%d, want 0/0", len(store.sessions), len(control.started))
+		}
+	})
+}
+
 func TestCreateSessionEnforcesPersistedIntegerBounds(t *testing.T) {
 	const maxInt32 = 2147483647
 	t.Run("maximum accepted", func(t *testing.T) {

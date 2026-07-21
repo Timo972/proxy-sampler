@@ -23,9 +23,10 @@ import (
 )
 
 const (
-	defaultProbeTarget  = "https://speed.cloudflare.com/cdn-cgi/trace"
-	defaultDialTimeout  = 10 * time.Second
-	maxPersistedInteger = 2147483647
+	defaultProbeTarget        = "https://speed.cloudflare.com/cdn-cgi/trace"
+	defaultDialTimeout        = 10 * time.Second
+	maxCreateSessionBodyBytes = 1 << 20
+	maxPersistedInteger       = 2147483647
 )
 
 // Control owns the sampler worker lifecycle behind the HTTP API.
@@ -81,7 +82,7 @@ func validateCreateSessionRequest(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		raw, err := io.ReadAll(r.Body)
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateSessionBodyBytes))
 		if err != nil {
 			requestErrorHandler(w, r, err)
 			return
