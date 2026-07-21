@@ -1,6 +1,6 @@
-import type { KeyboardEvent, MouseEvent } from 'react'
+import type { MouseEvent } from 'react'
 import { Square } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 import type { Session } from '../lib/api'
 import { formatLastIP, formatMilliseconds, formatPercent, formatTimestamp } from '../lib/format'
@@ -21,12 +21,6 @@ const columns = ['Name', 'Proxy', 'Mode', 'Status', 'Success rate', 'Median RTT'
 export function SessionTable({ id, title, sessions, stoppingID, onStop }: SessionTableProps) {
   const navigate = useNavigate()
   const open = (session: Session) => navigate(`/sessions/${session.id}`)
-  const onKeyDown = (event: KeyboardEvent, session: Session) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      open(session)
-    }
-  }
   const stop = (event: MouseEvent, session: Session) => {
     event.stopPropagation()
     onStop(session)
@@ -51,12 +45,9 @@ export function SessionTable({ id, title, sessions, stoppingID, onStop }: Sessio
               <TableRow
                 key={session.id}
                 className="session-row"
-                tabIndex={0}
-                aria-label={`${session.name}, ${session.status}`}
                 onClick={() => open(session)}
-                onKeyDown={(event) => onKeyDown(event, session)}
               >
-                <TableCell><strong>{session.name}</strong></TableCell>
+                <TableCell><Link className="session-link" to={`/sessions/${session.id}`} onClick={(event) => event.stopPropagation()}><strong>{session.name}</strong></Link></TableCell>
                 <TableCell className="mono">{session.proxy_display}</TableCell>
                 <TableCell className="capitalize">{session.mode}</TableCell>
                 <TableCell><SessionStatusBadge status={session.status} /></TableCell>
@@ -86,7 +77,7 @@ export function SessionTable({ id, title, sessions, stoppingID, onStop }: Sessio
         {sessions.map((session) => (
           <article className="session-record" key={session.id}>
             <div className="record-heading">
-              <button className="record-title" type="button" onClick={() => open(session)}>{session.name}</button>
+              <Link className="record-title" to={`/sessions/${session.id}`}>{session.name}</Link>
               <SessionStatusBadge status={session.status} />
             </div>
             <dl>

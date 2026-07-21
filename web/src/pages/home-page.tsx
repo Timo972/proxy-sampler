@@ -43,6 +43,7 @@ export function HomePage({ onNewSession }: { onNewSession: () => void }) {
         </section>
       ) : (
         <div className="session-sections">
+          <h1 className="sr-only">Sampling sessions</h1>
           <SessionTable id="active-sessions" title="Active sessions" sessions={active} stoppingID={stoppingID} onStop={(session) => stop.mutate(session.id)} />
           <SessionTable id="inactive-sessions" title="Stopped / Finished sessions" sessions={inactive} stoppingID={stoppingID} onStop={(session) => stop.mutate(session.id)} />
         </div>

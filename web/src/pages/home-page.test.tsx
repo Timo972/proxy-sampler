@@ -28,6 +28,24 @@ const stopped = sessionFixture({
   proxy_display: 'pool.example:9000',
 })
 
+const newlyCreated = {
+  id: '33333333-3333-4333-8333-333333333333',
+  name: 'New no-sample session',
+  proxy_display: 'new.example:1080',
+  mode: 'sticky',
+  status: 'running',
+  cadence_seconds: 30,
+  probes_per_sample: 3,
+  probe_target: 'https://speed.cloudflare.com/cdn-cgi/trace',
+  dial_timeout_ms: 10000,
+  samples_taken: 0,
+  probes_ok: 0,
+  probes_total: 0,
+  success_rate: 0,
+  distinct_ips: 0,
+  created_at: '2026-07-21T12:00:00Z',
+} satisfies Session
+
 afterEach(() => {
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
 })
@@ -59,6 +77,7 @@ describe('HomePage', () => {
 
     const activeHeading = await screen.findByRole('heading', { name: 'Active sessions' })
     expect(activeHeading).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Sampling sessions' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Stopped / Finished sessions' })).toBeInTheDocument()
     const activeSection = activeHeading.closest('section')!
     for (const heading of ['Name', 'Proxy', 'Mode', 'Status', 'Success rate', 'Median RTT', 'Distinct IPs', 'Last IP / category', 'Last sample']) {
@@ -73,6 +92,14 @@ describe('HomePage', () => {
     const labels = Array.from(mobileRecords!.querySelectorAll('dt')).map((node) => node.textContent)
     expect(labels).toEqual(expect.arrayContaining(['Proxy', 'Mode', 'Status', 'Success rate', 'Median RTT', 'Distinct IPs', 'Last IP / category', 'Last sample']))
     expect(container.querySelector('.home-page')).toHaveClass('no-page-overflow')
+  })
+
+  it('renders a newly created session when nullable sample fields are omitted', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([newlyCreated])))
+    renderHome()
+
+    const row = await screen.findByRole('row', { name: /New no-sample session/i })
+    expect(within(row).getAllByText('—')).toHaveLength(3)
   })
 
   it('navigates from a row while stop remains a local row action', async () => {
@@ -92,6 +119,35 @@ describe('HomePage', () => {
     renderHome()
     const stop = await screen.findByRole('button', { name: 'Stop Frankfurt sticky' })
     fireEvent.click(stop)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `/api/sessions/${running.id}/stop`,
+      expect.objectContaining({ method: 'POST' }),
+    ))
+    expect(screen.queryByText('Session destination')).not.toBeInTheDocument()
+  })
+
+  it('provides a real session link for keyboard and browser navigation', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([running])))
+    renderHome()
+
+    const links = await screen.findAllByRole('link', { name: 'Frankfurt sticky' })
+    expect(links).toHaveLength(2)
+    for (const link of links) expect(link).toHaveAttribute('href', `/sessions/${running.id}`)
+  })
+
+  it.each(['{Enter}', ' '])('keeps Stop keyboard activation local for %s', async (key) => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') return emptyResponse()
+      return jsonResponse([running])
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderHome()
+    const user = userEvent.setup()
+
+    const stop = await screen.findByRole('button', { name: 'Stop Frankfurt sticky' })
+    stop.focus()
+    await user.keyboard(key)
+
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       `/api/sessions/${running.id}/stop`,
       expect.objectContaining({ method: 'POST' }),

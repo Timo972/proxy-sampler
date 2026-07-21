@@ -14,21 +14,21 @@ export interface Session {
   probes_per_sample: number
   probe_target: string
   dial_timeout_ms: number
-  max_samples: number | null
-  max_duration_seconds: number | null
+  max_samples?: number | null
+  max_duration_seconds?: number | null
   samples_taken: number
   probes_ok: number
   probes_total: number
   success_rate: number
   distinct_ips: number
-  last_sample_at: string | null
-  last_primary_ip: string | null
-  last_primary_category: string | null
-  last_rtt_ms: number | null
-  last_error: string | null
+  last_sample_at?: string | null
+  last_primary_ip?: string | null
+  last_primary_category?: string | null
+  last_rtt_ms?: number | null
+  last_error?: string | null
   created_at: string
-  started_at: string | null
-  stopped_at: string | null
+  started_at?: string | null
+  stopped_at?: string | null
 }
 
 export interface CreateSessionRequest {
@@ -65,10 +65,18 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   })
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ message: response.statusText })) as { code?: string; message?: string }
-    throw new APIError(response.status, body.code ?? 'request_failed', body.message ?? 'Request failed')
+    const payload: unknown = await response.json().catch(() => null)
+    const body = isErrorBody(payload) ? payload : undefined
+    throw new APIError(response.status, body?.code ?? 'request_failed', (body?.message ?? response.statusText) || 'Request failed')
   }
   return response.status === 204 ? undefined as T : response.json() as Promise<T>
+}
+
+function isErrorBody(value: unknown): value is { code?: string; message?: string } {
+  if (typeof value !== 'object' || value === null) return false
+  const body = value as Record<string, unknown>
+  return (body.code === undefined || typeof body.code === 'string')
+    && (body.message === undefined || typeof body.message === 'string')
 }
 
 export function useSessions() {

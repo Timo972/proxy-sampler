@@ -18,7 +18,7 @@ export function AppShell({ children, onNewSession }: { children: ReactNode; onNe
             <span>Proxy Sampler</span>
           </a>
           <div className="topbar-actions">
-            <div className={`readiness ${ready ? 'is-ready' : readiness.isPending ? 'is-pending' : 'is-unavailable'}`} role="status" aria-live="polite">
+            <div className={`readiness ${ready ? 'is-ready' : readiness.isPending ? 'is-pending' : 'is-unavailable'}`} role="status" aria-label={readinessLabel} aria-live="polite">
               <span className="readiness-dot" aria-hidden="true" />
               <span>{readinessLabel}</span>
             </div>

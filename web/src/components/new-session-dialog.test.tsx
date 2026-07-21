@@ -108,6 +108,34 @@ describe('NewSessionDialog', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/')
   })
 
+  it('resets advanced and manual-probe state after successful creation', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(errorResponse(400, 'invalid_request', 'The proxy URL is invalid'))
+      .mockResolvedValueOnce(jsonResponse(createdSession)))
+    renderDialog()
+    const user = userEvent.setup()
+    await fillRequired(user, 'socks5h://user:first-secret@proxy.example:1080')
+    await user.click(screen.getByRole('button', { name: 'Advanced settings' }))
+    const probes = screen.getByLabelText('Probes per sample')
+    await user.clear(probes)
+    await user.type(probes, '5')
+
+    await user.click(screen.getByRole('button', { name: 'Start session' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('The proxy URL is invalid')
+    await user.type(screen.getByLabelText('Proxy connection string'), 'socks5h://user:second-secret@proxy.example:1080')
+    await user.click(screen.getByRole('button', { name: 'Start session' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: 'Reopen dialog' }))
+    expect(screen.queryByLabelText('Probe target URL')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Proxy connection string')).toHaveValue('')
+    await user.selectOptions(screen.getByLabelText('Sampling mode'), 'pool')
+    expect(screen.getByLabelText('Probes per sample')).toHaveValue(8)
+    await user.selectOptions(screen.getByLabelText('Sampling mode'), 'sticky')
+    expect(screen.getByLabelText('Probes per sample')).toHaveValue(3)
+  })
+
   it('uses an accessible modal with initial focus and Escape close', async () => {
     renderDialog()
     const user = userEvent.setup()
@@ -137,6 +165,7 @@ function DialogHarness() {
       <Routes>
         <Route path="*" element={<Location />} />
       </Routes>
+      <button type="button" onClick={() => setOpen(true)}>Reopen dialog</button>
       <NewSessionDialog open={open} onOpenChange={setOpen} />
     </>
   )

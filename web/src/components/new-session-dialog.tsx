@@ -78,8 +78,7 @@ export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpen
     form.resetField('proxy', { defaultValue: '' })
     try {
       const session = await create.mutateAsync(request)
-      form.reset(defaults)
-      onOpenChange(false)
+      changeOpen(false)
       navigate(`/sessions/${session.id}`)
     } catch (error) {
       setServerError(error instanceof APIError ? error.message : 'The session could not be started. Try again.')
