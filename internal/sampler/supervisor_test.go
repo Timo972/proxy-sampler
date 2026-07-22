@@ -3,8 +3,10 @@ package sampler
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -202,6 +204,64 @@ func TestSupervisorStopPersistentStoreFailureRestoresWorkerOwnership(t *testing.
 	}
 }
 
+func TestSupervisorStopTimeoutRecoversAfterCanceledWorkerEventuallyExits(t *testing.T) {
+	harness := newTimeoutRecoveryHarness(t)
+
+	startedAt := time.Now()
+	err := harness.supervisor.Stop(context.Background(), harness.value.ID)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop blocked-worker timeout = %v, want context deadline", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 250*time.Millisecond {
+		t.Fatalf("Stop returned after %s, want bounded transition", elapsed)
+	}
+
+	harness.releaseOld()
+	harness.waitForReplacementTick(t)
+	waitForCount(t, &harness.store.saveCount, 2)
+	harness.assertSingleReplacement(t)
+	harness.store.mu.Lock()
+	defer harness.store.mu.Unlock()
+	if len(harness.store.saved) != 2 || harness.store.saved[0].snapshot.SamplesTaken != 1 || harness.store.saved[1].snapshot.SamplesTaken != 2 {
+		t.Fatalf("recovered sample sequences = %#v, want exactly 1 then 2", harness.store.saved)
+	}
+}
+
+func TestSupervisorRepeatedTimeoutsScheduleExactlyOneRecovery(t *testing.T) {
+	harness := newTimeoutRecoveryHarness(t)
+	for attempt := range 2 {
+		if err := harness.supervisor.Stop(context.Background(), harness.value.ID); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Stop timeout %d = %v, want context deadline", attempt+1, err)
+		}
+	}
+	harness.releaseOld()
+	harness.waitForReplacementTick(t)
+	harness.assertSingleReplacement(t)
+}
+
+func TestSupervisorDeferredRecoveryRetriesTransientValidationFailure(t *testing.T) {
+	harness := newTimeoutRecoveryHarness(t)
+	if err := harness.supervisor.Stop(context.Background(), harness.value.ID); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop timeout = %v, want context deadline", err)
+	}
+	harness.store.mu.Lock()
+	harness.store.sessionErrs = []error{errors.New("postgres temporarily unavailable"), nil}
+	harness.store.mu.Unlock()
+	retry := make(chan time.Time, 1)
+	harness.supervisor.retryAfter = func(time.Duration) <-chan time.Time { return retry }
+	readsBefore := harness.store.sessionAttempts.Load()
+	harness.releaseOld()
+	waitForAtomicGreater(t, &harness.store.sessionAttempts, readsBefore)
+	select {
+	case <-harness.replacementTick:
+		t.Fatal("recovery published before retrying transient durable-state validation")
+	default:
+	}
+	retry <- time.Now()
+	harness.waitForReplacementTick(t)
+	harness.assertSingleReplacement(t)
+}
+
 func TestSupervisorDeleteOrdersStopFlushCHAndPostgres(t *testing.T) {
 	root, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -294,6 +354,94 @@ func TestSupervisorDeleteStopFailureRestoresWorkerOwnershipBeforeReturning(t *te
 
 	cancelRoot()
 	supervisor.Wait()
+}
+
+func TestSupervisorDeleteTimeoutRecoversAfterCanceledWorkerEventuallyExits(t *testing.T) {
+	harness := newTimeoutRecoveryHarness(t)
+
+	startedAt := time.Now()
+	err := harness.supervisor.Delete(context.Background(), harness.value.ID)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Delete blocked-worker timeout = %v, want context deadline", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 250*time.Millisecond {
+		t.Fatalf("Delete returned after %s, want bounded transition", elapsed)
+	}
+	if len(harness.store.operations) != 0 {
+		t.Fatalf("Delete crossed a barrier after failed Stop: %v", harness.store.operations)
+	}
+
+	harness.releaseOld()
+	harness.waitForReplacementTick(t)
+	harness.assertSingleReplacement(t)
+	if len(harness.store.operations) != 0 {
+		t.Fatalf("deferred Delete recovery crossed a barrier: %v", harness.store.operations)
+	}
+}
+
+func TestSupervisorDeferredRecoveryDoesNotResurrectSubsequentlyStoppedOrDeletedRow(t *testing.T) {
+	t.Run("stopped", func(t *testing.T) {
+		harness := newTimeoutRecoveryHarness(t)
+		if err := harness.supervisor.Stop(context.Background(), harness.value.ID); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("initial Stop = %v, want timeout", err)
+		}
+		result := make(chan error, 1)
+		go func() { result <- harness.supervisor.Stop(context.Background(), harness.value.ID) }()
+		waitForSessionOperation(t, harness.supervisor, harness.value.ID)
+		readsBefore := harness.store.sessionAttempts.Load()
+		harness.releaseOld()
+		if err := <-result; err != nil {
+			t.Fatalf("subsequent Stop: %v", err)
+		}
+		harness.waitForNoRecovery(t, readsBefore)
+		stored, err := harness.store.SessionByID(context.Background(), harness.value.ID)
+		if err != nil || stored.Status != session.StatusStopped {
+			t.Fatalf("durable row after subsequent Stop = %#v, %v", stored, err)
+		}
+	})
+
+	t.Run("deleted", func(t *testing.T) {
+		harness := newTimeoutRecoveryHarness(t)
+		if err := harness.supervisor.Stop(context.Background(), harness.value.ID); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("initial Stop = %v, want timeout", err)
+		}
+		result := make(chan error, 1)
+		go func() { result <- harness.supervisor.Delete(context.Background(), harness.value.ID) }()
+		waitForSessionOperation(t, harness.supervisor, harness.value.ID)
+		readsBefore := harness.store.sessionAttempts.Load()
+		harness.releaseOld()
+		if err := <-result; err != nil {
+			t.Fatalf("subsequent Delete: %v", err)
+		}
+		harness.waitForNoRecovery(t, readsBefore)
+		if _, err := harness.store.SessionByID(context.Background(), harness.value.ID); !errors.Is(err, session.ErrNotFound) {
+			t.Fatalf("durable row after subsequent Delete error = %v, want not found", err)
+		}
+		want := []string{"stop", "flush", "ch-delete", "pg-delete"}
+		if len(harness.store.operations) != len(want) {
+			t.Fatalf("Delete operations = %v, want %v", harness.store.operations, want)
+		}
+	})
+}
+
+func TestSupervisorWaitDrainsDeferredRecoveryWithoutLatePublication(t *testing.T) {
+	harness := newTimeoutRecoveryHarness(t)
+	if err := harness.supervisor.Stop(context.Background(), harness.value.ID); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("initial Stop = %v, want timeout", err)
+	}
+	waitDone := make(chan struct{})
+	go func() {
+		harness.supervisor.Wait()
+		close(waitDone)
+	}()
+	waitForSupervisorClosing(t, harness.supervisor)
+	harness.releaseOld()
+	select {
+	case <-waitDone:
+	case <-time.After(time.Second):
+		t.Fatal("Wait did not drain the delayed worker and deferred recovery")
+	}
+	harness.assertNoReplacement(t)
 }
 
 func TestSupervisorRootCancellationWaitsWithoutChangingStatus(t *testing.T) {
@@ -512,6 +660,144 @@ func TestSupervisorWaitClosesPublicationGate(t *testing.T) {
 	}
 }
 
+type timeoutRecoveryHarness struct {
+	supervisor        *Supervisor
+	store             *fakeSessionStore
+	value             session.Session
+	cancelRoot        context.CancelFunc
+	oldProber         *stubbornProber
+	replacementTick   chan struct{}
+	replacementOnce   sync.Once
+	workerFactoryCall atomic.Int32
+}
+
+func newTimeoutRecoveryHarness(t *testing.T) *timeoutRecoveryHarness {
+	t.Helper()
+	root, cancelRoot := context.WithCancel(context.Background())
+	store := newFakeSessionStore()
+	value, cipher := encryptedSession(t, 1)
+	store.sessions[value.ID] = value
+	harness := &timeoutRecoveryHarness{
+		store: store, value: value, cancelRoot: cancelRoot,
+		oldProber: &stubbornProber{started: make(chan struct{}), release: make(chan struct{}), result: ProbeResult{
+			IP: netip.MustParseAddr("192.0.2.80"), RTT: time.Millisecond,
+		}},
+		replacementTick: make(chan struct{}),
+	}
+	sink := &fakeEventSink{operations: &store.operations}
+	harness.supervisor = NewSupervisor(root, store, sink, &fakeSessionReader{operations: &store.operations}, func(session.Session) *Worker {
+		var prober Prober = harness.oldProber
+		if harness.workerFactoryCall.Add(1) > 1 {
+			prober = &notifyingProber{
+				started: harness.replacementTick, once: &harness.replacementOnce,
+				result: ProbeResult{IP: netip.MustParseAddr("192.0.2.81"), RTT: 2 * time.Millisecond},
+			}
+		}
+		return testWorker(store, cipher, prober, &fakeLookup{}, sink)
+	})
+	harness.supervisor.stopTimeout = 20 * time.Millisecond
+	if err := harness.supervisor.Start(context.Background(), value.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-harness.oldProber.started:
+	case <-time.After(time.Second):
+		t.Fatal("initial stubborn worker did not start")
+	}
+	t.Cleanup(func() {
+		harness.releaseOld()
+		cancelRoot()
+		harness.supervisor.Wait()
+	})
+	return harness
+}
+
+func (h *timeoutRecoveryHarness) releaseOld() {
+	h.oldProber.releaseOnce.Do(func() { close(h.oldProber.release) })
+}
+
+func (h *timeoutRecoveryHarness) waitForReplacementTick(t *testing.T) {
+	t.Helper()
+	select {
+	case <-h.replacementTick:
+	case <-time.After(time.Second):
+		t.Fatal("delayed worker exit left the durable running row without a replacement")
+	}
+}
+
+func (h *timeoutRecoveryHarness) assertSingleReplacement(t *testing.T) {
+	t.Helper()
+	h.supervisor.mu.Lock()
+	workers := len(h.supervisor.workers)
+	h.supervisor.mu.Unlock()
+	if calls := h.workerFactoryCall.Load(); calls != 2 || workers != 1 {
+		t.Fatalf("worker factory calls/owned workers = %d/%d, want exactly 2/1", calls, workers)
+	}
+}
+
+func (h *timeoutRecoveryHarness) waitForNoRecovery(t *testing.T, readsBefore int64) {
+	t.Helper()
+	waitForAtomicGreater(t, &h.store.sessionAttempts, readsBefore)
+	h.assertNoReplacement(t)
+}
+
+func (h *timeoutRecoveryHarness) assertNoReplacement(t *testing.T) {
+	t.Helper()
+	h.supervisor.mu.Lock()
+	workers := len(h.supervisor.workers)
+	h.supervisor.mu.Unlock()
+	if calls := h.workerFactoryCall.Load(); calls != 1 || workers != 0 {
+		t.Fatalf("terminal row was resurrected: factory calls/owned workers = %d/%d", calls, workers)
+	}
+	select {
+	case <-h.replacementTick:
+		t.Fatal("terminal row produced a replacement tick")
+	default:
+	}
+}
+
+func waitForSessionOperation(t *testing.T, supervisor *Supervisor, id uuid.UUID) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		supervisor.mu.Lock()
+		active := supervisor.operations[id] != nil
+		supervisor.mu.Unlock()
+		if active {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("subsequent lifecycle operation did not acquire serialization")
+}
+
+func waitForSupervisorClosing(t *testing.T, supervisor *Supervisor) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		supervisor.mu.Lock()
+		closing := supervisor.closing
+		supervisor.mu.Unlock()
+		if closing {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("Wait did not close the publication gate")
+}
+
+func waitForAtomicGreater(t *testing.T, value *atomic.Int64, before int64) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if value.Load() > before {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("deferred recovery did not revalidate durable state after %d reads", before)
+}
+
 type blockingProber struct{ started chan struct{} }
 
 func (p blockingProber) Probe(ctx context.Context, _ proxy.ContextDialer, _ string, _ time.Duration) ProbeResult {
@@ -538,6 +824,31 @@ func (p *cancelGateProber) Probe(ctx context.Context, _ proxy.ContextDialer, _ s
 	close(p.canceled)
 	<-p.release
 	return ProbeResult{Err: ctx.Err()}
+}
+
+type stubbornProber struct {
+	started     chan struct{}
+	release     chan struct{}
+	startedOnce sync.Once
+	releaseOnce sync.Once
+	result      ProbeResult
+}
+
+func (p *stubbornProber) Probe(context.Context, proxy.ContextDialer, string, time.Duration) ProbeResult {
+	p.startedOnce.Do(func() { close(p.started) })
+	<-p.release
+	return p.result
+}
+
+type notifyingProber struct {
+	started chan struct{}
+	once    *sync.Once
+	result  ProbeResult
+}
+
+func (p *notifyingProber) Probe(context.Context, proxy.ContextDialer, string, time.Duration) ProbeResult {
+	p.once.Do(func() { close(p.started) })
+	return p.result
 }
 
 type fakeSessionReader struct {

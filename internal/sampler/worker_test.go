@@ -379,6 +379,7 @@ type fakeSessionStore struct {
 	saved                             []savedTick
 	operations                        []string
 	saveErr, sessionErr, ipsErr       error
+	sessionErrs                       []error
 	finishErr                         error
 	finishErrs                        []error
 	stopErr                           error
@@ -393,6 +394,7 @@ type fakeSessionStore struct {
 	saveCount, stopCount, finishCount atomic.Int64
 	finishAttempts                    atomic.Int64
 	stopAttempts                      atomic.Int64
+	sessionAttempts                   atomic.Int64
 }
 
 func newFakeSessionStore() *fakeSessionStore {
@@ -404,8 +406,16 @@ func (s *fakeSessionStore) Create(_ context.Context, v session.Session) (session
 }
 func (s *fakeSessionStore) Sessions(context.Context) ([]session.Session, error) { return nil, nil }
 func (s *fakeSessionStore) SessionByID(_ context.Context, id uuid.UUID) (session.Session, error) {
+	s.sessionAttempts.Add(1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.sessionErrs) > 0 {
+		err := s.sessionErrs[0]
+		s.sessionErrs = s.sessionErrs[1:]
+		if err != nil {
+			return session.Session{}, err
+		}
+	}
 	if s.sessionErr != nil {
 		return session.Session{}, s.sessionErr
 	}

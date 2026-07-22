@@ -148,6 +148,48 @@ func TestServiceCoalescesSimultaneousSameIPMisses(t *testing.T) {
 	if provider.calls.Load() != 1 || secondary.calls.Load() != 1 || store.saveCalls() != 1 {
 		t.Fatalf("provider stack/save calls = %d/%d/%d, want 1/1/1", provider.calls.Load(), secondary.calls.Load(), store.saveCalls())
 	}
+	assertServiceKeysEmpty(t, service)
+}
+
+func TestServiceCoalescesIPv4MappedAndNativeAddresses(t *testing.T) {
+	now := time.Date(2026, 7, 22, 14, 0, 0, 0, time.UTC)
+	store := newConcurrentServiceStore(2)
+	provider := newBlockingResultProvider("geo", Partial{Country: "DE", HadSignal: true})
+	service := newTestService(t, store, []Provider{provider}, time.Hour, semaphore.NewWeighted(2), now)
+	t.Cleanup(provider.releaseAll)
+
+	results := make(chan session.Reputation, 2)
+	errs := make(chan error, 2)
+	for _, ip := range []netip.Addr{providerTestIP, netip.MustParseAddr("::ffff:203.0.113.7")} {
+		go func(ip netip.Addr) {
+			reputation, err := service.Lookup(context.Background(), ip)
+			results <- reputation
+			errs <- err
+		}(ip)
+	}
+	select {
+	case <-provider.entered:
+	case <-time.After(time.Second):
+		t.Fatal("mapped/native enrichment leader did not start")
+	}
+	select {
+	case <-provider.entered:
+		t.Fatal("mapped and native IPv4 forms ran separate provider stacks")
+	case <-time.After(75 * time.Millisecond):
+	}
+	provider.releaseAll()
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+		if result := <-results; result.IP != providerTestIP || result.Country != "DE" {
+			t.Fatalf("mapped/native coalesced result = %#v", result)
+		}
+	}
+	if provider.calls.Load() != 1 || store.saveCalls() != 1 {
+		t.Fatalf("mapped/native provider/save calls = %d/%d, want 1/1", provider.calls.Load(), store.saveCalls())
+	}
+	assertServiceKeysEmpty(t, service)
 }
 
 func TestServiceCanceledSameIPWaiterDoesNotAffectLeader(t *testing.T) {
@@ -189,6 +231,7 @@ func TestServiceCanceledSameIPWaiterDoesNotAffectLeader(t *testing.T) {
 	if provider.calls.Load() != 1 || store.saveCalls() != 1 {
 		t.Fatalf("provider/save calls after canceled waiter = %d/%d, want 1/1", provider.calls.Load(), store.saveCalls())
 	}
+	assertServiceKeysEmpty(t, service)
 }
 
 func TestServiceCanceledLeaderReleasesSameIPFollower(t *testing.T) {
@@ -229,6 +272,7 @@ func TestServiceCanceledLeaderReleasesSameIPFollower(t *testing.T) {
 	if provider.calls.Load() != 2 || store.saveCalls() != 1 {
 		t.Fatalf("provider/save calls after canceled leader = %d/%d, want 2/1", provider.calls.Load(), store.saveCalls())
 	}
+	assertServiceKeysEmpty(t, service)
 }
 
 func TestServiceProviderErrorStillSavesMergedFieldsAndClassification(t *testing.T) {
@@ -431,6 +475,15 @@ type concurrentServiceStore struct {
 	barrierWant    int
 	barrierArrived int
 	barrierRelease chan struct{}
+}
+
+func assertServiceKeysEmpty(t *testing.T, service *Service) {
+	t.Helper()
+	service.keyMu.Lock()
+	defer service.keyMu.Unlock()
+	if len(service.keys) != 0 {
+		t.Fatalf("enrichment keyed coordination retained %d entries", len(service.keys))
+	}
 }
 
 func newConcurrentServiceStore(barrierWant int) *concurrentServiceStore {

@@ -28,21 +28,24 @@ type Supervisor struct {
 	reader        sessionReader
 	workerFactory func(session.Session) *Worker
 
-	mu          sync.Mutex
-	workers     map[uuid.UUID]*runningWorker
-	operations  map[uuid.UUID]*sessionOperation
-	closing     bool
-	root        context.Context
-	wg          sync.WaitGroup
-	now         func() time.Time
-	stopTimeout time.Duration
-	retryAfter  func(time.Duration) <-chan time.Time
+	mu             sync.Mutex
+	workers        map[uuid.UUID]*runningWorker
+	operations     map[uuid.UUID]*sessionOperation
+	closing        bool
+	root           context.Context
+	recoveryCtx    context.Context
+	cancelRecovery context.CancelFunc
+	wg             sync.WaitGroup
+	now            func() time.Time
+	stopTimeout    time.Duration
+	retryAfter     func(time.Duration) <-chan time.Time
 }
 
 type runningWorker struct {
-	cancel   context.CancelFunc
-	done     chan struct{}
-	prepared *PreparedWorker
+	cancel            context.CancelFunc
+	done              chan struct{}
+	prepared          *PreparedWorker
+	recoveryScheduled bool
 }
 
 type sessionOperation struct{ done chan struct{} }
@@ -54,10 +57,12 @@ func NewSupervisor(root context.Context, store session.Store, sink EventSink, re
 	if root == nil {
 		root = context.Background()
 	}
+	recoveryCtx, cancelRecovery := context.WithCancel(root)
 	return &Supervisor{
 		store: store, sink: sink, reader: reader, workerFactory: workerFactory,
 		workers: make(map[uuid.UUID]*runningWorker), operations: make(map[uuid.UUID]*sessionOperation),
-		root: root, now: time.Now, stopTimeout: stopTransitionTimeout, retryAfter: time.After,
+		root: root, recoveryCtx: recoveryCtx, cancelRecovery: cancelRecovery,
+		now: time.Now, stopTimeout: stopTransitionTimeout, retryAfter: time.After,
 	}
 }
 
@@ -186,8 +191,14 @@ func (s *Supervisor) Stop(ctx context.Context, id uuid.UUID) error {
 }
 
 func (s *Supervisor) stopWithOwnership(ctx context.Context, id uuid.UUID) error {
-	prepared, err := s.stop(ctx, id)
+	prepared, delayed, err := s.stop(ctx, id)
 	if err == nil || errors.Is(err, session.ErrNotRunning) || errors.Is(err, session.ErrNotFound) {
+		return err
+	}
+	if delayed != nil {
+		if recoveryErr := s.scheduleRecovery(id, delayed); recoveryErr != nil {
+			return errors.Join(err, fmt.Errorf("schedule worker recovery: %w", recoveryErr))
+		}
 		return err
 	}
 	restoreCtx, cancelRestore := context.WithTimeout(context.Background(), s.stopTimeout)
@@ -208,7 +219,7 @@ func (s *Supervisor) stopWithOwnership(ctx context.Context, id uuid.UUID) error 
 	return err
 }
 
-func (s *Supervisor) stop(ctx context.Context, id uuid.UUID) (*PreparedWorker, error) {
+func (s *Supervisor) stop(ctx context.Context, id uuid.UUID) (*PreparedWorker, *runningWorker, error) {
 	s.mu.Lock()
 	running := s.workers[id]
 	s.mu.Unlock()
@@ -219,25 +230,82 @@ func (s *Supervisor) stop(ctx context.Context, id uuid.UUID) (*PreparedWorker, e
 		select {
 		case <-running.done:
 		case <-ctx.Done():
-			return prepared, ctx.Err()
+			select {
+			case <-running.done:
+			default:
+				return prepared, running, ctx.Err()
+			}
 		}
 	} else {
 		value, err := s.store.SessionByID(ctx, id)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if value.Status != session.StatusRunning {
-			return nil, session.ErrNotRunning
+			return nil, nil, session.ErrNotRunning
 		}
 	}
 	for {
 		err := s.store.Stop(ctx, id, s.now())
 		if err == nil || errors.Is(err, session.ErrNotRunning) {
-			return prepared, err
+			return prepared, nil, err
 		}
 		select {
 		case <-ctx.Done():
-			return prepared, errors.Join(err, ctx.Err())
+			return prepared, nil, errors.Join(err, ctx.Err())
+		case <-s.retryAfter(stopTransitionRetry):
+		}
+	}
+}
+
+func (s *Supervisor) scheduleRecovery(id uuid.UUID, running *runningWorker) error {
+	s.mu.Lock()
+	if running.recoveryScheduled {
+		s.mu.Unlock()
+		return nil
+	}
+	if s.closing {
+		s.mu.Unlock()
+		return errSupervisorClosed
+	}
+	if err := s.recoveryCtx.Err(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	running.recoveryScheduled = true
+	s.wg.Add(1)
+	s.mu.Unlock()
+
+	go s.recoverAfterExit(id, running)
+	return nil
+}
+
+func (s *Supervisor) recoverAfterExit(id uuid.UUID, running *runningWorker) {
+	defer s.wg.Done()
+	select {
+	case <-running.done:
+	case <-s.recoveryCtx.Done():
+		return
+	}
+
+	for {
+		attemptCtx, cancelAttempt := context.WithTimeout(s.recoveryCtx, s.stopTimeout)
+		var stale bool
+		err := s.withSessionOperation(attemptCtx, id, func() error {
+			var err error
+			stale, err = s.startCurrent(attemptCtx, id)
+			return err
+		})
+		cancelAttempt()
+		if err == nil || (stale && (errors.Is(err, session.ErrNotRunning) || errors.Is(err, session.ErrNotFound))) {
+			return
+		}
+		if errors.Is(err, errSupervisorClosed) || s.recoveryCtx.Err() != nil {
+			return
+		}
+		select {
+		case <-s.recoveryCtx.Done():
+			return
 		case <-s.retryAfter(stopTransitionRetry):
 		}
 	}
@@ -269,10 +337,11 @@ func (s *Supervisor) Delete(ctx context.Context, id uuid.UUID) error {
 	})
 }
 
-// Wait blocks until every worker published by this supervisor has exited.
+// Wait blocks until every published worker and deferred recovery has exited.
 func (s *Supervisor) Wait() {
 	s.mu.Lock()
 	s.closing = true
+	s.cancelRecovery()
 	s.mu.Unlock()
 	s.wg.Wait()
 }
