@@ -61,6 +61,38 @@ func TestSupervisorLifecycle(t *testing.T) {
 	}
 }
 
+func TestSupervisorReenableResetsAndStarts(t *testing.T) {
+	root, cancelRoot := context.WithCancel(context.Background())
+	defer cancelRoot()
+	store := newFakeSessionStore()
+	value, cipher := encryptedSession(t, 1)
+	value.Status = session.StatusStopped
+	value.Snapshot.SamplesTaken = 12
+	store.sessions[value.ID] = value
+	sink := &fakeEventSink{}
+	started := make(chan struct{}, 1)
+	factory := func(session.Session) *Worker {
+		return testWorker(store, cipher, blockingProber{started: started}, &fakeLookup{}, sink)
+	}
+	supervisor := NewSupervisor(root, store, sink, &fakeSessionReader{}, factory)
+
+	if err := supervisor.Reenable(context.Background(), value.ID); err != nil {
+		t.Fatalf("Reenable: %v", err)
+	}
+	<-started
+
+	got, err := store.SessionByID(context.Background(), value.ID)
+	if err != nil {
+		t.Fatalf("SessionByID: %v", err)
+	}
+	if got.Status != session.StatusRunning {
+		t.Errorf("status = %q, want running", got.Status)
+	}
+	if store.reenableCount.Load() != 1 {
+		t.Errorf("reenable count = %d, want 1", store.reenableCount.Load())
+	}
+}
+
 func TestSupervisorStopCompletesAfterRequestCanceledWhileWaitingForWorker(t *testing.T) {
 	root, cancelRoot := context.WithCancel(context.Background())
 	defer cancelRoot()

@@ -403,28 +403,28 @@ type savedTick struct {
 }
 
 type fakeSessionStore struct {
-	mu                                sync.Mutex
-	sessions                          map[uuid.UUID]session.Session
-	ips                               map[uuid.UUID][]session.IPRecord
-	saved                             []savedTick
-	operations                        []string
-	saveErr, sessionErr, ipsErr       error
-	sessionErrs                       []error
-	finishErr                         error
-	finishErrs                        []error
-	stopErr                           error
-	stopErrs                          []error
-	rejectCanceledStop                bool
-	ipsStarted, ipsRelease            chan struct{}
-	ipsStartOnce                      sync.Once
-	runningStarted, runningRelease    chan struct{}
-	runningStartOnce                  sync.Once
-	stopStarted, stopRelease          chan struct{}
-	stopStartOnce                     sync.Once
-	saveCount, stopCount, finishCount atomic.Int64
-	finishAttempts                    atomic.Int64
-	stopAttempts                      atomic.Int64
-	sessionAttempts                   atomic.Int64
+	mu                                               sync.Mutex
+	sessions                                         map[uuid.UUID]session.Session
+	ips                                              map[uuid.UUID][]session.IPRecord
+	saved                                            []savedTick
+	operations                                       []string
+	saveErr, sessionErr, ipsErr                      error
+	sessionErrs                                      []error
+	finishErr                                        error
+	finishErrs                                       []error
+	stopErr                                          error
+	stopErrs                                         []error
+	rejectCanceledStop                               bool
+	ipsStarted, ipsRelease                           chan struct{}
+	ipsStartOnce                                     sync.Once
+	runningStarted, runningRelease                   chan struct{}
+	runningStartOnce                                 sync.Once
+	stopStarted, stopRelease                         chan struct{}
+	stopStartOnce                                    sync.Once
+	saveCount, stopCount, finishCount, reenableCount atomic.Int64
+	finishAttempts                                   atomic.Int64
+	stopAttempts                                     atomic.Int64
+	sessionAttempts                                  atomic.Int64
 }
 
 func newFakeSessionStore() *fakeSessionStore {
@@ -528,7 +528,22 @@ func (s *fakeSessionStore) Finish(_ context.Context, id uuid.UUID, _ time.Time) 
 	s.finishCount.Add(1)
 	return nil
 }
-func (s *fakeSessionStore) Reenable(context.Context, uuid.UUID, time.Time) error { return nil }
+func (s *fakeSessionStore) Reenable(_ context.Context, id uuid.UUID, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.sessions[id]
+	if !ok {
+		return session.ErrNotFound
+	}
+	v.Status = session.StatusRunning
+	v.SequenceOffset += v.Snapshot.SamplesTaken
+	v.Snapshot.SamplesTaken = 0
+	v.Snapshot.ProbesOK = 0
+	v.Snapshot.ProbesTotal = 0
+	s.sessions[id] = v
+	s.reenableCount.Add(1)
+	return nil
+}
 func (s *fakeSessionStore) Delete(_ context.Context, id uuid.UUID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

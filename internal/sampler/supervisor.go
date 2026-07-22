@@ -102,6 +102,18 @@ func (s *Supervisor) Start(ctx context.Context, id uuid.UUID) error {
 	})
 }
 
+// Reenable resets a stopped or finished session's per-run counters and starts
+// a fresh worker. Prior samples and IP inventory are preserved.
+func (s *Supervisor) Reenable(ctx context.Context, id uuid.UUID) error {
+	if err := s.root.Err(); err != nil {
+		return err
+	}
+	if err := s.store.Reenable(ctx, id, s.now().UTC()); err != nil {
+		return err
+	}
+	return s.Start(ctx, id)
+}
+
 // startCurrent reports stale when the control row itself was deleted or is no
 // longer running. Errors from preparation are never classified as stale.
 func (s *Supervisor) startCurrent(ctx context.Context, id uuid.UUID) (stale bool, err error) {
