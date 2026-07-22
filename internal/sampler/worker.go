@@ -212,6 +212,7 @@ func (p *PreparedWorker) tick(ctx context.Context) error {
 	}
 
 	nextSequence := p.sampleSeq + 1
+	clickhouseSequence := uint32(p.session.SequenceOffset) + nextSequence
 	nextPrimary := p.previousPrimary
 	if sample.PrimaryIP.IsValid() {
 		nextPrimary = sample.PrimaryIP
@@ -230,7 +231,7 @@ func (p *PreparedWorker) tick(ctx context.Context) error {
 	if reputation, ok := reputations[sample.PrimaryIP]; ok {
 		nextSnapshot.LastCategory = reputation.Category
 	}
-	event := sampleEvent(p.session.ID, sampledAt, nextSequence, sample, reputations[sample.PrimaryIP])
+	event := sampleEvent(p.session.ID, sampledAt, clickhouseSequence, sample, reputations[sample.PrimaryIP])
 
 	if err := p.worker.store.SaveTick(ctx, p.session.ID, nextSnapshot, hits); err != nil {
 		return err
@@ -241,7 +242,7 @@ func (p *PreparedWorker) tick(ctx context.Context) error {
 	p.session.Snapshot = nextSnapshot
 	if !p.worker.sink.Enqueue(event) {
 		dropped := p.worker.dropped.Add(1)
-		p.worker.logger.Warn("clickhouse sample queue full; dropping persisted event", "session_id", p.session.ID, "sample_seq", nextSequence, "dropped_total", dropped)
+		p.worker.logger.Warn("clickhouse sample queue full; dropping persisted event", "session_id", p.session.ID, "sample_seq", clickhouseSequence, "dropped_total", dropped)
 	}
 	return nil
 }

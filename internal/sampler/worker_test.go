@@ -20,6 +20,36 @@ import (
 	"github.com/timo972/proxy-sampler/internal/session"
 )
 
+func TestPreparedWorkerTickAppliesSequenceOffset(t *testing.T) {
+	store := newFakeSessionStore()
+	value, cipher := encryptedSession(t, 1)
+	value.SequenceOffset = 100
+	value.Snapshot = session.Snapshot{SamplesTaken: 12, ProbesOK: 20, ProbesTotal: 24, DistinctIPs: 1, LastPrimaryIP: netip.MustParseAddr("192.0.2.1")}
+	store.sessions[value.ID] = value
+	store.ips[value.ID] = []session.IPRecord{{IP: value.Snapshot.LastPrimaryIP}}
+
+	sink := &fakeEventSink{}
+	worker := testWorker(store, cipher, fixedProber{result: ProbeResult{IP: netip.MustParseAddr("192.0.2.2")}}, &fakeLookup{}, sink)
+	prepared, err := worker.Prepare(context.Background(), value)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if err := prepared.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if len(sink.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(sink.events))
+	}
+	// Per-run sequence is 12+1=13; ClickHouse sequence continues at 100+13=113.
+	if sink.events[0].SampleSeq != 113 {
+		t.Errorf("event SampleSeq = %d, want 113", sink.events[0].SampleSeq)
+	}
+	if store.saved[0].snapshot.SamplesTaken != 13 {
+		t.Errorf("SamplesTaken = %d, want 13 (per-run)", store.saved[0].snapshot.SamplesTaken)
+	}
+}
+
 func TestPreparedWorkerTickPersistsBeforeEnqueueAndLimitsOrderedProbes(t *testing.T) {
 	store := newFakeSessionStore()
 	value, cipher := encryptedSession(t, 10)
