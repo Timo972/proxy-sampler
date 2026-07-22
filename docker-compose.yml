@@ -1,0 +1,75 @@
+name: proxy-sampler
+
+# Full local stack: the app plus its Postgres and ClickHouse datastores.
+# Published ports bind to 127.0.0.1 only — the app has no auth layer, so it must
+# never be reachable from outside this host. Supply ENCRYPTION_KEY via .env or the
+# shell (see README); it is intentionally not baked into this file.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      # POSTGRES_DB pre-creates the database the app requires to already exist.
+      POSTGRES_DB: proxy_sampler
+      POSTGRES_USER: proxy_sampler
+      POSTGRES_PASSWORD: proxy_sampler
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U proxy_sampler -d proxy_sampler"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_DB: proxy_sampler
+      # The image's built-in `default` user is locked to 127.0.0.1, so the app
+      # (a separate container) can't use it. Create a dedicated user the image
+      # exposes on all networks, and point the app DSN + healthcheck at it.
+      CLICKHOUSE_USER: proxy_sampler
+      CLICKHOUSE_PASSWORD: proxy_sampler
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - chdata:/var/lib/clickhouse
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user", "proxy_sampler", "--password", "proxy_sampler", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      # DSNs are compose-owned and target the service names on the internal network.
+      DATABASE_URL: postgres://proxy_sampler:proxy_sampler@postgres:5432/proxy_sampler?sslmode=disable
+      CLICKHOUSE_DSN: clickhouse://proxy_sampler:proxy_sampler@clickhouse:9000/proxy_sampler
+      DB_AUTO_MIGRATE: "true"
+      # Required and secret; resolved from .env/shell, failing fast when unset.
+      ENCRYPTION_KEY: "${ENCRYPTION_KEY:?set ENCRYPTION_KEY, generate with: openssl rand -base64 32}"
+      # Optional tunables: only take effect when set in .env/shell, otherwise the
+      # app's built-in defaults apply.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      ENRICH_CONCURRENCY: ${ENRICH_CONCURRENCY:-}
+      REPUTATION_TTL: ${REPUTATION_TTL:-}
+      PROBE_TARGET_DEFAULT: ${PROBE_TARGET_DEFAULT:-}
+    ports:
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  pgdata:
+  chdata:

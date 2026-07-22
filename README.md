@@ -58,6 +58,23 @@ Open `http://localhost:8080`. Useful targets are:
 | `make ch-migrate-up` | Apply filesystem ClickHouse migrations with `CLICKHOUSE_DSN`. |
 | `make docker-build` | Build `proxy-sampler:local`. |
 
+## Run the full stack with Docker Compose
+
+`docker-compose.yml` runs the service together with its PostgreSQL and ClickHouse datastores, so you do not have to provision databases separately. It builds the image from the local `Dockerfile`, applies migrations on startup, and binds every published port to `127.0.0.1` because the app has no authentication.
+
+Provide the required encryption key, then start the stack:
+
+```bash
+cp .env.example .env
+openssl rand -base64 32
+# Replace ENCRYPTION_KEY in .env with that command's output.
+docker compose up --build
+```
+
+Compose reads `ENCRYPTION_KEY` from `.env` (or your shell) and refuses to start if it is unset. The datastore DSNs are supplied by Compose and point at the internal `postgres` and `clickhouse` services, so the `localhost` DSNs in `.env` are ignored in this mode. The optional tunables (`OTEL_EXPORTER_OTLP_ENDPOINT`, `ENRICH_CONCURRENCY`, `REPUTATION_TTL`, `PROBE_TARGET_DEFAULT`) are passed through when present.
+
+Once PostgreSQL and ClickHouse report healthy, the app starts and is reachable at `http://localhost:8080`. Stop the stack with `docker compose down`, or `docker compose down -v` to also discard the `pgdata` and `chdata` volumes.
+
 ## Configuration
 
 | Variable | Required | Default | Description |
