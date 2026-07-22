@@ -12,6 +12,7 @@ const (
 	errorCodeInvalidRequest        = "invalid_request"
 	errorCodeNotFound              = "not_found"
 	errorCodeSessionNotRunning     = "session_not_running"
+	errorCodeSessionAlreadyRunning = "session_already_running"
 	errorCodeInternal              = "internal_error"
 	errorCodeDependencyUnavailable = "dependency_unavailable"
 )
@@ -34,6 +35,10 @@ func notFound() error {
 
 func sessionNotRunning() error {
 	return &apiError{status: http.StatusConflict, code: errorCodeSessionNotRunning, message: "session is not running"}
+}
+
+func sessionAlreadyRunning() error {
+	return &apiError{status: http.StatusConflict, code: errorCodeSessionAlreadyRunning, message: "session is already running"}
 }
 
 func internalError() error {

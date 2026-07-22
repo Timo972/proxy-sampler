@@ -70,6 +70,23 @@ describe('compareAttributes', () => {
     expect(city.verdict).toBe('unknown')
   })
 
+  it('uses the most-common observed ISP rather than the first row', () => {
+    const ispReport: SessionReport = {
+      ...report,
+      ips: [
+        // First row is the less-frequent ISP, so a naive ips[0] lookup would report "Other".
+        { ip: '203.0.113.1', category: 'residential', country: 'DE', isp: 'Other', asn: 'AS2', risk_score: null, greynoise_class: '', dnsbl_listed: false, dnsbl_hits: [], first_seen: '', last_seen: '', hit_count: 3 },
+        { ip: '203.0.113.2', category: 'residential', country: 'US', isp: 'Acme', asn: 'AS1', risk_score: null, greynoise_class: '', dnsbl_listed: false, dnsbl_hits: [], first_seen: '', last_seen: '', hit_count: 9 },
+        { ip: '203.0.113.3', category: 'residential', country: 'US', isp: 'Acme', asn: 'AS1', risk_score: null, greynoise_class: '', dnsbl_listed: false, dnsbl_hits: [], first_seen: '', last_seen: '', hit_count: 8 },
+      ],
+    }
+    const rows = compareAttributes(parseProxyAttributes('isp-acme'), ispReport)
+    const isp = rows.find((r) => r.label === 'ISP')!
+    // Acme's combined tally (9 + 8 = 17) beats Other's (3), even though Other appears first.
+    expect(isp.observed).toContain('Acme')
+    expect(isp.verdict).toBe('match')
+  })
+
   it('marks a country request as partial when the dominant share is below the match threshold', () => {
     const mixedReport: SessionReport = {
       ...report,

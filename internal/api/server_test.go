@@ -430,7 +430,7 @@ func TestReenableSessionConflictWhenAlreadyRunning(t *testing.T) {
 	control := &fakeControl{reenableErr: session.ErrAlreadyRunning}
 	handler := testHandler(t, store, control)
 	response := request(t, handler, http.MethodPost, "/api/sessions/"+uuid.New().String()+"/reenable", "")
-	assertAPIError(t, response, http.StatusConflict, "session_not_running")
+	assertAPIError(t, response, http.StatusConflict, "session_already_running")
 }
 
 func TestReenableSessionNotFound(t *testing.T) {

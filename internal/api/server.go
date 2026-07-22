@@ -290,7 +290,7 @@ func (s *Server) ReenableSession(ctx context.Context, request openapi.ReenableSe
 	case errors.Is(err, session.ErrNotFound):
 		return nil, notFound()
 	case errors.Is(err, session.ErrAlreadyRunning):
-		return nil, sessionNotRunning()
+		return nil, sessionAlreadyRunning()
 	default:
 		return nil, internalError()
 	}

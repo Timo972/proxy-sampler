@@ -97,6 +97,18 @@ function dominantCountry(ips: IPRow[]): { code: string; share: number } | undefi
   return { code, share: count / sum }
 }
 
+function dominantISP(ips: IPRow[]): string | undefined {
+  if (ips.length === 0) return undefined
+  const totals = new Map<string, number>()
+  for (const ip of ips) {
+    if (!ip.isp) continue
+    const weight = ip.hit_count > 0 ? ip.hit_count : 1
+    totals.set(ip.isp, (totals.get(ip.isp) ?? 0) + weight)
+  }
+  if (totals.size === 0) return undefined
+  return [...totals.entries()].sort((a, b) => b[1] - a[1])[0][0]
+}
+
 function dominantNetwork(report: SessionReport): { type: string; share: number } | undefined {
   const c = report.pool_composition
   const entries: Array<[string, number]> = [
@@ -145,7 +157,7 @@ export function compareAttributes(parsed: ParsedAttributes, report: SessionRepor
 
   const isp = attribute(parsed, 'isp')
   if (isp) {
-    const observed = report ? (report.ips[0]?.isp ?? '') : ''
+    const observed = report ? (dominantISP(report.ips) ?? '') : ''
     rows.push({ label: 'ISP', requested: isp.value, observed: observed || '—', verdict: observed && observed.toLowerCase().includes(isp.value.toLowerCase()) ? 'match' : observed ? 'mismatch' : 'unknown' })
   }
 
