@@ -262,6 +262,111 @@ func TestPreparedWorkerRunHonorsPersistedCapsAndCancellation(t *testing.T) {
 	})
 }
 
+func TestPreparedWorkerRunRetriesFinishWithoutFurtherSampling(t *testing.T) {
+	store := newFakeSessionStore()
+	value, cipher := encryptedSession(t, 1)
+	maximum := 1
+	value.MaxSamples = &maximum
+	store.sessions[value.ID] = value
+	store.finishErrs = []error{errors.New("postgres temporarily unavailable"), nil}
+	clock := &manualClock{
+		now:   time.Date(2026, 7, 22, 14, 0, 0, 0, time.UTC),
+		ticks: make(chan time.Time, 1), afterCalls: make(chan time.Duration, 2),
+	}
+	prober := &orderedProber{}
+	worker := testWorker(store, cipher, prober, &fakeLookup{}, &fakeEventSink{})
+	worker.clock = clock
+	prepared, err := worker.Prepare(context.Background(), value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { prepared.Run(context.Background()); close(done) }()
+
+	select {
+	case <-clock.afterCalls:
+	case <-done:
+		t.Fatal("Run exited after the first failed Finish instead of remaining supervised")
+	case <-time.After(time.Second):
+		t.Fatal("Run neither scheduled a Finish retry nor exited")
+	}
+	if got := store.finishAttempts.Load(); got != 1 {
+		t.Fatalf("Finish attempts before retry = %d, want 1", got)
+	}
+	if got := store.saveCount.Load(); got != 1 || prober.next.Load() != 1 {
+		t.Fatalf("saved ticks/probes before retry = %d/%d, want 1/1", got, prober.next.Load())
+	}
+
+	clock.ticks <- clock.now.Add(time.Second)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not exit after Finish retry succeeded")
+	}
+	if got := store.finishAttempts.Load(); got != 2 || store.finishCount.Load() != 1 {
+		t.Fatalf("Finish attempts/successes = %d/%d, want 2/1", got, store.finishCount.Load())
+	}
+	if got := store.saveCount.Load(); got != 1 || prober.next.Load() != 1 {
+		t.Fatalf("Finish retry performed additional ticks/probes = %d/%d", got, prober.next.Load())
+	}
+}
+
+func TestPreparedWorkerRunPersistentFinishFailureWaitsForRootCancellation(t *testing.T) {
+	store := newFakeSessionStore()
+	value, cipher := encryptedSession(t, 1)
+	maximum := 1
+	value.MaxSamples = &maximum
+	store.sessions[value.ID] = value
+	store.finishErr = errors.New("postgres unavailable")
+	clock := &manualClock{
+		now:   time.Date(2026, 7, 22, 14, 0, 0, 0, time.UTC),
+		ticks: make(chan time.Time, 1), afterCalls: make(chan time.Duration, 3),
+	}
+	prober := &orderedProber{}
+	worker := testWorker(store, cipher, prober, &fakeLookup{}, &fakeEventSink{})
+	worker.clock = clock
+	prepared, err := worker.Prepare(context.Background(), value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { prepared.Run(ctx); close(done) }()
+
+	select {
+	case <-clock.afterCalls:
+	case <-done:
+		t.Fatal("Run exited after persistent Finish failure")
+	case <-time.After(time.Second):
+		t.Fatal("Run did not schedule its first Finish retry")
+	}
+	clock.ticks <- clock.now.Add(time.Second)
+	select {
+	case <-clock.afterCalls:
+	case <-done:
+		t.Fatal("Run exited after the second Finish failure")
+	case <-time.After(time.Second):
+		t.Fatal("Run did not schedule its second Finish retry")
+	}
+	if got := store.saveCount.Load(); got != 1 || prober.next.Load() != 1 {
+		t.Fatalf("persistent Finish retries performed additional ticks/probes = %d/%d", got, prober.next.Load())
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not exit after root cancellation")
+	}
+	stored, err := store.SessionByID(context.Background(), value.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != session.StatusRunning || store.finishCount.Load() != 0 {
+		t.Fatalf("persistent Finish cancellation changed durable state to %q with %d successes", stored.Status, store.finishCount.Load())
+	}
+}
+
 type savedTick struct {
 	snapshot session.Snapshot
 	hits     []session.IPHit
@@ -274,11 +379,20 @@ type fakeSessionStore struct {
 	saved                             []savedTick
 	operations                        []string
 	saveErr, sessionErr, ipsErr       error
+	finishErr                         error
+	finishErrs                        []error
+	stopErr                           error
+	stopErrs                          []error
+	rejectCanceledStop                bool
 	ipsStarted, ipsRelease            chan struct{}
 	ipsStartOnce                      sync.Once
 	runningStarted, runningRelease    chan struct{}
 	runningStartOnce                  sync.Once
+	stopStarted, stopRelease          chan struct{}
+	stopStartOnce                     sync.Once
 	saveCount, stopCount, finishCount atomic.Int64
+	finishAttempts                    atomic.Int64
+	stopAttempts                      atomic.Int64
 }
 
 func newFakeSessionStore() *fakeSessionStore {
@@ -318,9 +432,29 @@ func (s *fakeSessionStore) RunningSessions(context.Context) ([]session.Session, 
 	}
 	return result, nil
 }
-func (s *fakeSessionStore) Stop(_ context.Context, id uuid.UUID, _ time.Time) error {
+func (s *fakeSessionStore) Stop(ctx context.Context, id uuid.UUID, _ time.Time) error {
+	s.stopAttempts.Add(1)
+	if s.stopStarted != nil {
+		s.stopStartOnce.Do(func() { close(s.stopStarted) })
+	}
+	if s.stopRelease != nil {
+		<-s.stopRelease
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.rejectCanceledStop && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if len(s.stopErrs) > 0 {
+		err := s.stopErrs[0]
+		s.stopErrs = s.stopErrs[1:]
+		if err != nil {
+			return err
+		}
+	}
+	if s.stopErr != nil {
+		return s.stopErr
+	}
 	v, ok := s.sessions[id]
 	if !ok || v.Status != session.StatusRunning {
 		return session.ErrNotRunning
@@ -334,6 +468,17 @@ func (s *fakeSessionStore) Stop(_ context.Context, id uuid.UUID, _ time.Time) er
 func (s *fakeSessionStore) Finish(_ context.Context, id uuid.UUID, _ time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.finishAttempts.Add(1)
+	if len(s.finishErrs) > 0 {
+		err := s.finishErrs[0]
+		s.finishErrs = s.finishErrs[1:]
+		if err != nil {
+			return err
+		}
+	}
+	if s.finishErr != nil {
+		return s.finishErr
+	}
 	v, ok := s.sessions[id]
 	if !ok || v.Status != session.StatusRunning {
 		return session.ErrNotRunning
@@ -457,12 +602,18 @@ func (c fixedClock) Now() time.Time                     { return c.now }
 func (fixedClock) After(time.Duration) <-chan time.Time { return make(chan time.Time) }
 
 type manualClock struct {
-	now   time.Time
-	ticks chan time.Time
+	now        time.Time
+	ticks      chan time.Time
+	afterCalls chan time.Duration
 }
 
-func (c *manualClock) Now() time.Time                       { return c.now }
-func (c *manualClock) After(time.Duration) <-chan time.Time { return c.ticks }
+func (c *manualClock) Now() time.Time { return c.now }
+func (c *manualClock) After(delay time.Duration) <-chan time.Time {
+	if c.afterCalls != nil {
+		c.afterCalls <- delay
+	}
+	return c.ticks
+}
 
 func waitForCount(t *testing.T, count *atomic.Int64, want int64) {
 	t.Helper()

@@ -49,6 +49,10 @@ func Aggregate(results []ProbeResult, previous netip.Addr, seen map[netip.Addr]s
 	errorsInOrder := make([]string, 0, len(results))
 
 	for index, result := range results {
+		if result.Err == nil && result.IP.IsValid() && result.RTT < 0 {
+			errorsInOrder = append(errorsInOrder, "probe returned negative RTT")
+			continue
+		}
 		if result.Err != nil || !result.IP.IsValid() {
 			if result.Err != nil {
 				errorsInOrder = append(errorsInOrder, result.Err.Error())
@@ -125,7 +129,7 @@ func joinProbeErrors(messages []string) string {
 		seen[message] = struct{}{}
 		unique = append(unique, message)
 	}
-	joined := strings.Join(unique, "; ")
+	joined := strings.ToValidUTF8(strings.Join(unique, "; "), "�")
 	if len(joined) <= maxSampleError {
 		return joined
 	}

@@ -104,6 +104,133 @@ func TestServiceSharedSemaphoreBoundsConcurrentMissesAcrossServices(t *testing.T
 	}
 }
 
+func TestServiceCoalescesSimultaneousSameIPMisses(t *testing.T) {
+	const callers = 8
+	now := time.Date(2026, 7, 22, 14, 0, 0, 0, time.UTC)
+	store := newConcurrentServiceStore(callers)
+	provider := newBlockingResultProvider("geo", Partial{Country: "DE", HadSignal: true})
+	secondary := &serviceFakeProvider{name: "secondary", partial: Partial{City: "Frankfurt", HadSignal: true}}
+	service := newTestService(t, store, []Provider{provider, secondary}, 24*time.Hour, semaphore.NewWeighted(4), now)
+	t.Cleanup(provider.releaseAll)
+
+	type lookupResult struct {
+		reputation session.Reputation
+		err        error
+	}
+	results := make(chan lookupResult, callers)
+	for range callers {
+		go func() {
+			reputation, err := service.Lookup(context.Background(), providerTestIP)
+			results <- lookupResult{reputation: reputation, err: err}
+		}()
+	}
+
+	select {
+	case <-provider.entered:
+	case <-time.After(time.Second):
+		t.Fatal("same-IP provider leader did not start")
+	}
+	select {
+	case <-provider.entered:
+		t.Fatal("a simultaneous same-IP follower ran a duplicate provider stack")
+	case <-time.After(75 * time.Millisecond):
+	}
+	provider.releaseAll()
+	for range callers {
+		result := <-results
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.reputation.Country != "DE" || result.reputation.City != "Frankfurt" || result.reputation.IP != providerTestIP {
+			t.Fatalf("coalesced result = %#v", result.reputation)
+		}
+	}
+	if provider.calls.Load() != 1 || secondary.calls.Load() != 1 || store.saveCalls() != 1 {
+		t.Fatalf("provider stack/save calls = %d/%d/%d, want 1/1/1", provider.calls.Load(), secondary.calls.Load(), store.saveCalls())
+	}
+}
+
+func TestServiceCanceledSameIPWaiterDoesNotAffectLeader(t *testing.T) {
+	now := time.Date(2026, 7, 22, 14, 0, 0, 0, time.UTC)
+	store := newConcurrentServiceStore(0)
+	provider := newBlockingResultProvider("geo", Partial{Country: "DE", HadSignal: true})
+	service := newTestService(t, store, []Provider{provider}, time.Hour, semaphore.NewWeighted(1), now)
+	t.Cleanup(provider.releaseAll)
+
+	leaderResult := make(chan error, 1)
+	go func() {
+		_, err := service.Lookup(context.Background(), providerTestIP)
+		leaderResult <- err
+	}()
+	<-provider.entered
+	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
+	waiterResult := make(chan error, 1)
+	go func() {
+		_, err := service.Lookup(waiterCtx, providerTestIP)
+		waiterResult <- err
+	}()
+	cancelWaiter()
+	select {
+	case err := <-waiterResult:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled waiter error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled same-IP waiter deadlocked")
+	}
+	provider.releaseAll()
+	if err := <-leaderResult; err != nil {
+		t.Fatal(err)
+	}
+	got, err := service.Lookup(context.Background(), providerTestIP)
+	if err != nil || got.Country != "DE" {
+		t.Fatalf("fresh lookup after canceled waiter = %#v, %v", got, err)
+	}
+	if provider.calls.Load() != 1 || store.saveCalls() != 1 {
+		t.Fatalf("provider/save calls after canceled waiter = %d/%d, want 1/1", provider.calls.Load(), store.saveCalls())
+	}
+}
+
+func TestServiceCanceledLeaderReleasesSameIPFollower(t *testing.T) {
+	now := time.Date(2026, 7, 22, 14, 0, 0, 0, time.UTC)
+	store := newConcurrentServiceStore(0)
+	provider := &cancelThenSucceedProvider{firstEntered: make(chan struct{}), partial: Partial{Country: "DE", HadSignal: true}}
+	service := newTestService(t, store, []Provider{provider}, time.Hour, semaphore.NewWeighted(1), now)
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderResult := make(chan error, 1)
+	go func() {
+		_, err := service.Lookup(leaderCtx, providerTestIP)
+		leaderResult <- err
+	}()
+	<-provider.firstEntered
+	followerResult := make(chan struct {
+		reputation session.Reputation
+		err        error
+	}, 1)
+	go func() {
+		reputation, err := service.Lookup(context.Background(), providerTestIP)
+		followerResult <- struct {
+			reputation session.Reputation
+			err        error
+		}{reputation: reputation, err: err}
+	}()
+	cancelLeader()
+	if err := <-leaderResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled leader error = %v, want context.Canceled", err)
+	}
+	select {
+	case result := <-followerResult:
+		if result.err != nil || result.reputation.Country != "DE" {
+			t.Fatalf("follower after canceled leader = %#v, %v", result.reputation, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("same-IP follower deadlocked behind canceled leader")
+	}
+	if provider.calls.Load() != 2 || store.saveCalls() != 1 {
+		t.Fatalf("provider/save calls after canceled leader = %d/%d, want 2/1", provider.calls.Load(), store.saveCalls())
+	}
+}
+
 func TestServiceProviderErrorStillSavesMergedFieldsAndClassification(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
@@ -294,6 +421,109 @@ type blockingServiceProvider struct {
 	release   chan struct{}
 	active    atomic.Int32
 	maxActive atomic.Int32
+}
+
+type concurrentServiceStore struct {
+	session.Store
+	mu             sync.Mutex
+	values         map[netip.Addr]session.Reputation
+	saves          int
+	barrierWant    int
+	barrierArrived int
+	barrierRelease chan struct{}
+}
+
+func newConcurrentServiceStore(barrierWant int) *concurrentServiceStore {
+	store := &concurrentServiceStore{values: make(map[netip.Addr]session.Reputation), barrierWant: barrierWant}
+	if barrierWant > 0 {
+		store.barrierRelease = make(chan struct{})
+	}
+	return store
+}
+
+func (s *concurrentServiceStore) ReputationByIP(ctx context.Context, ip netip.Addr) (session.Reputation, bool, error) {
+	s.mu.Lock()
+	if s.barrierRelease != nil && s.barrierArrived < s.barrierWant {
+		s.barrierArrived++
+		if s.barrierArrived == s.barrierWant {
+			close(s.barrierRelease)
+		}
+	}
+	release := s.barrierRelease
+	s.mu.Unlock()
+	if release != nil {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return session.Reputation{}, false, ctx.Err()
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, ok := s.values[ip]
+	return value, ok, nil
+}
+
+func (s *concurrentServiceStore) SaveReputation(ctx context.Context, reputation session.Reputation) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.values[reputation.IP] = reputation
+	s.saves++
+	return nil
+}
+
+func (s *concurrentServiceStore) saveCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saves
+}
+
+type blockingResultProvider struct {
+	name        string
+	partial     Partial
+	entered     chan struct{}
+	release     chan struct{}
+	releaseOnce sync.Once
+	calls       atomic.Int32
+}
+
+func newBlockingResultProvider(name string, partial Partial) *blockingResultProvider {
+	return &blockingResultProvider{name: name, partial: partial, entered: make(chan struct{}, 16), release: make(chan struct{})}
+}
+
+func (p *blockingResultProvider) Name() string { return p.name }
+
+func (p *blockingResultProvider) Lookup(ctx context.Context, _ netip.Addr) (Partial, error) {
+	p.calls.Add(1)
+	p.entered <- struct{}{}
+	select {
+	case <-ctx.Done():
+		return Partial{}, ctx.Err()
+	case <-p.release:
+		return p.partial, nil
+	}
+}
+
+func (p *blockingResultProvider) releaseAll() { p.releaseOnce.Do(func() { close(p.release) }) }
+
+type cancelThenSucceedProvider struct {
+	firstEntered chan struct{}
+	partial      Partial
+	calls        atomic.Int32
+}
+
+func (p *cancelThenSucceedProvider) Name() string { return "cancel-then-succeed" }
+
+func (p *cancelThenSucceedProvider) Lookup(ctx context.Context, _ netip.Addr) (Partial, error) {
+	if p.calls.Add(1) == 1 {
+		close(p.firstEntered)
+		<-ctx.Done()
+		return Partial{}, ctx.Err()
+	}
+	return p.partial, nil
 }
 
 func newBlockingServiceProvider(name string) *blockingServiceProvider {

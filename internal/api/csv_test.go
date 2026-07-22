@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -160,6 +161,66 @@ func TestExportSessionCSVWritesChronologicalPerProbeRowsAndQuotesErrors(t *testi
 	}
 }
 
+func TestExportSessionCSVEmptyResultIsExactHeader(t *testing.T) {
+	value := sampleSession()
+	store := &reportStore{memoryStore: newMemoryStore()}
+	store.sessions = []session.Session{value}
+	response := request(t, reportTestServer(t, store, &fakeReportReader{}).Handler(), http.MethodGet,
+		"/api/sessions/"+value.ID.String()+"/export.csv", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", response.Code, response.Body.String())
+	}
+	want := strings.Join(csvHeader, ",") + "\n"
+	if response.Body.String() != want {
+		t.Fatalf("empty CSV = %q, want exact header %q", response.Body.String(), want)
+	}
+}
+
+func TestBackendMismatchedProbeArraysAreSafeForSamplesAndCSV(t *testing.T) {
+	value := sampleSession()
+	store := &reportStore{memoryStore: newMemoryStore()}
+	store.sessions = []session.Session{value}
+	event := sampleEvent(value.ID, 1, time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC))
+	event.ProbesAttempted = 3
+	event.ProbeIPs = []net.IP{net.ParseIP("203.0.113.10")}
+	event.ProbeRTTsMS = []uint32{11, 22}
+	event.ProbeOK = []uint8{1}
+	reader := &fakeReportReader{
+		samples: ch.SamplePage{Items: []ch.Event{event}, Page: 1, PageSize: 50, Total: 1},
+		stream:  []ch.Event{event},
+	}
+
+	samples := request(t, reportTestServer(t, store, reader).Handler(), http.MethodGet,
+		"/api/sessions/"+value.ID.String()+"/samples", "")
+	if samples.Code != http.StatusOK {
+		t.Fatalf("samples status = %d; body=%s", samples.Code, samples.Body.String())
+	}
+	var sampleBody struct {
+		Items []struct {
+			ProbeIPs    []*string `json:"probe_ips"`
+			ProbeRTTsMS []int     `json:"probe_rtts_ms"`
+			ProbeOK     []bool    `json:"probe_ok"`
+		} `json:"items"`
+	}
+	decodeJSON(t, samples, &sampleBody)
+	if len(sampleBody.Items) != 1 || len(sampleBody.Items[0].ProbeIPs) != 1 || len(sampleBody.Items[0].ProbeRTTsMS) != 2 || len(sampleBody.Items[0].ProbeOK) != 1 {
+		t.Fatalf("mismatched sample arrays were not returned safely: %#v", sampleBody.Items)
+	}
+
+	export := request(t, reportTestServer(t, store, reader).Handler(), http.MethodGet,
+		"/api/sessions/"+value.ID.String()+"/export.csv", "")
+	if export.Code != http.StatusOK {
+		t.Fatalf("CSV status = %d; body=%s", export.Code, export.Body.String())
+	}
+	rows, err := csv.NewReader(strings.NewReader(export.Body.String())).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 4 || rows[1][3] != "true" || rows[1][4] != "203.0.113.10" || rows[1][5] != "11" || rows[2][3] != "false" || rows[2][4] != "" || rows[2][5] != "22" || rows[3][3] != "false" || rows[3][5] != "0" {
+		t.Fatalf("bounds-safe mismatched CSV rows = %#v", rows)
+	}
+}
+
 func TestExportSessionCSVStreamsBeforeSourceCompletes(t *testing.T) {
 	value := sampleSession()
 	store := &reportStore{memoryStore: newMemoryStore()}
@@ -199,6 +260,47 @@ func TestExportSessionCSVStreamsBeforeSourceCompletes(t *testing.T) {
 		t.Fatalf("streamed first line = %q", line)
 	}
 	close(release)
+}
+
+func TestExportSessionCSVBlockedClientCancellationStopsProducer(t *testing.T) {
+	value := sampleSession()
+	store := &reportStore{memoryStore: newMemoryStore()}
+	store.sessions = []session.Session{value}
+	producerExited := make(chan struct{})
+	reader := &fakeReportReader{streamFn: func(ctx context.Context, visit func(ch.Event) error) error {
+		defer close(producerExited)
+		if err := visit(sampleEvent(value.ID, 1, time.Now().UTC())); err != nil {
+			return err
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	handler := reportTestServer(t, store, reader).Handler()
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+value.ID.String()+"/export.csv", nil).WithContext(requestCtx)
+	writer := newCancelBlockingResponseWriter(requestCtx)
+	handlerDone := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(writer, req)
+		close(handlerDone)
+	}()
+
+	select {
+	case <-writer.entered:
+	case <-time.After(time.Second):
+		t.Fatal("response writer never blocked on CSV bytes")
+	}
+	cancelRequest()
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocked CSV handler did not return after client cancellation")
+	}
+	select {
+	case <-producerExited:
+	case <-time.After(time.Second):
+		t.Fatal("CSV producer goroutine did not exit after client cancellation")
+	}
 }
 
 func TestExportSessionCSVValidatesBeforeStreamingAndMapsInitialFailure(t *testing.T) {
@@ -260,4 +362,23 @@ func sampleEvent(id uuid.UUID, sequence uint32, sampledAt time.Time) ch.Event {
 		ProbeIPs:    []net.IP{net.ParseIP("203.0.113.10"), net.IPv6unspecified, net.ParseIP("203.0.113.11")},
 		ProbeRTTsMS: []uint32{10, 0, 30}, ProbeOK: []uint8{1, 0, 1},
 	}
+}
+
+type cancelBlockingResponseWriter struct {
+	header  http.Header
+	ctx     context.Context
+	entered chan struct{}
+	once    sync.Once
+}
+
+func newCancelBlockingResponseWriter(ctx context.Context) *cancelBlockingResponseWriter {
+	return &cancelBlockingResponseWriter{header: make(http.Header), ctx: ctx, entered: make(chan struct{})}
+}
+
+func (w *cancelBlockingResponseWriter) Header() http.Header { return w.header }
+func (*cancelBlockingResponseWriter) WriteHeader(int)       {}
+func (w *cancelBlockingResponseWriter) Write([]byte) (int, error) {
+	w.once.Do(func() { close(w.entered) })
+	<-w.ctx.Done()
+	return 0, w.ctx.Err()
 }

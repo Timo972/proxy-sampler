@@ -115,6 +115,25 @@ func TestSessionReportUsesHourlyBucketsBeyond48HoursAndExplicitRange(t *testing.
 	}
 }
 
+func TestSessionReportUsesFiveMinuteBucketsAtExactly48Hours(t *testing.T) {
+	from := time.Date(2026, 7, 20, 8, 0, 0, 0, time.UTC)
+	to := from.Add(48 * time.Hour)
+	value := sampleSession()
+	store := &reportStore{memoryStore: newMemoryStore()}
+	store.sessions = []session.Session{value}
+	reader := &fakeReportReader{}
+
+	response := request(t, reportTestServer(t, store, reader).Handler(), http.MethodGet,
+		"/api/sessions/"+value.ID.String()+"/report?from="+from.Format(time.RFC3339)+"&to="+to.Format(time.RFC3339), "")
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", response.Code, response.Body.String())
+	}
+	if reader.bucket != 5*time.Minute {
+		t.Fatalf("exact 48-hour bucket = %s, want 5m", reader.bucket)
+	}
+}
+
 func TestSessionReportReturnsEmptyArraysAndStableErrors(t *testing.T) {
 	t.Run("empty arrays", func(t *testing.T) {
 		value := sampleSession()

@@ -82,11 +82,17 @@ func (p HTTPProber) timeNow() time.Time {
 }
 
 func parseTrace(r io.Reader, rtt time.Duration) ProbeResult {
+	if rtt < 0 {
+		return ProbeResult{RTT: rtt, Err: fmt.Errorf("probe returned negative RTT %s", rtt)}
+	}
 	values := make(map[string]string, 3)
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		key, value, ok := strings.Cut(scanner.Text(), "=")
 		if ok {
+			if _, exists := values[key]; exists {
+				return ProbeResult{RTT: rtt, Err: fmt.Errorf("duplicate probe trace key %q", key)}
+			}
 			values[key] = strings.TrimSpace(value)
 		}
 	}

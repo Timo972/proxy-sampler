@@ -3,6 +3,7 @@ package sampler
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -58,6 +59,149 @@ func TestSupervisorLifecycle(t *testing.T) {
 	}
 }
 
+func TestSupervisorStopCompletesAfterRequestCanceledWhileWaitingForWorker(t *testing.T) {
+	root, cancelRoot := context.WithCancel(context.Background())
+	defer cancelRoot()
+	store := newFakeSessionStore()
+	store.rejectCanceledStop = true
+	value, cipher := encryptedSession(t, 1)
+	store.sessions[value.ID] = value
+	prober := &cancelGateProber{started: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{})}
+	sink := &fakeEventSink{}
+	supervisor := NewSupervisor(root, store, sink, &fakeSessionReader{}, func(session.Session) *Worker {
+		return testWorker(store, cipher, prober, &fakeLookup{}, sink)
+	})
+	if err := supervisor.Start(context.Background(), value.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-prober.started
+
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- supervisor.Stop(requestCtx, value.ID) }()
+	<-prober.canceled
+	cancelRequest()
+	close(prober.release)
+	if err := <-result; err != nil {
+		t.Fatalf("Stop after accepted request cancellation = %v, want durable completion", err)
+	}
+	stored, err := store.SessionByID(context.Background(), value.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != session.StatusStopped || store.stopCount.Load() != 1 {
+		t.Fatalf("durable status/count = %q/%d, want stopped/1", stored.Status, store.stopCount.Load())
+	}
+}
+
+func TestSupervisorStopUsesIndependentContextAtStoreBoundary(t *testing.T) {
+	root, cancelRoot := context.WithCancel(context.Background())
+	defer cancelRoot()
+	store := newFakeSessionStore()
+	store.rejectCanceledStop = true
+	store.stopStarted, store.stopRelease = make(chan struct{}), make(chan struct{})
+	value, cipher := encryptedSession(t, 1)
+	store.sessions[value.ID] = value
+	started := make(chan struct{}, 1)
+	sink := &fakeEventSink{}
+	supervisor := NewSupervisor(root, store, sink, &fakeSessionReader{}, func(session.Session) *Worker {
+		return testWorker(store, cipher, blockingProber{started: started}, &fakeLookup{}, sink)
+	})
+	if err := supervisor.Start(context.Background(), value.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- supervisor.Stop(requestCtx, value.ID) }()
+	<-store.stopStarted
+	cancelRequest()
+	close(store.stopRelease)
+	if err := <-result; err != nil {
+		t.Fatalf("Stop with canceled request at store boundary = %v, want durable completion", err)
+	}
+	stored, err := store.SessionByID(context.Background(), value.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != session.StatusStopped {
+		t.Fatalf("durable status = %q, want stopped", stored.Status)
+	}
+}
+
+func TestSupervisorStopRetriesTransientStoreFailure(t *testing.T) {
+	root, cancelRoot := context.WithCancel(context.Background())
+	defer cancelRoot()
+	store := newFakeSessionStore()
+	store.stopErrs = []error{errors.New("postgres temporarily unavailable"), nil}
+	value, cipher := encryptedSession(t, 1)
+	store.sessions[value.ID] = value
+	sink := &fakeEventSink{}
+	supervisor := NewSupervisor(root, store, sink, &fakeSessionReader{}, func(session.Session) *Worker {
+		return testWorker(store, cipher, blockingProber{}, &fakeLookup{}, sink)
+	})
+	if err := supervisor.Start(context.Background(), value.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.Stop(context.Background(), value.ID); err != nil {
+		t.Fatalf("Stop after transient store failure = %v, want retry success", err)
+	}
+	if got := store.stopAttempts.Load(); got != 2 || store.stopCount.Load() != 1 {
+		t.Fatalf("Stop attempts/successes = %d/%d, want 2/1", got, store.stopCount.Load())
+	}
+	supervisor.mu.Lock()
+	workers := len(supervisor.workers)
+	supervisor.mu.Unlock()
+	if workers != 0 {
+		t.Fatalf("workers after durable Stop = %d, want 0", workers)
+	}
+}
+
+func TestSupervisorStopPersistentStoreFailureRestoresWorkerOwnership(t *testing.T) {
+	root, cancelRoot := context.WithCancel(context.Background())
+	store := newFakeSessionStore()
+	store.stopErr = errors.New("postgres unavailable")
+	value, cipher := encryptedSession(t, 1)
+	store.sessions[value.ID] = value
+	started := make(chan struct{}, 2)
+	sink := &fakeEventSink{}
+	supervisor := NewSupervisor(root, store, sink, &fakeSessionReader{}, func(session.Session) *Worker {
+		return testWorker(store, cipher, blockingProber{started: started}, &fakeLookup{}, sink)
+	})
+	supervisor.stopTimeout = 20 * time.Millisecond
+	if err := supervisor.Start(context.Background(), value.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	store.sessionErr = errors.New("postgres reads unavailable")
+
+	err := supervisor.Stop(context.Background(), value.ID)
+	if err == nil || !strings.Contains(err.Error(), "postgres unavailable") {
+		t.Fatalf("Stop persistent store failure = %v, want bounded persistence error", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("persistent Stop failure left the durable running row without a replacement worker")
+	}
+	store.mu.Lock()
+	stored := store.sessions[value.ID]
+	store.mu.Unlock()
+	supervisor.mu.Lock()
+	workers := len(supervisor.workers)
+	supervisor.mu.Unlock()
+	if stored.Status != session.StatusRunning || workers != 1 {
+		t.Fatalf("durable status/workers = %q/%d, want running/1", stored.Status, workers)
+	}
+
+	cancelRoot()
+	supervisor.Wait()
+	if store.stopCount.Load() != 0 || store.finishCount.Load() != 0 {
+		t.Fatal("root cancellation changed durable status after reownership")
+	}
+}
+
 func TestSupervisorDeleteOrdersStopFlushCHAndPostgres(t *testing.T) {
 	root, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -98,6 +242,58 @@ func TestSupervisorDeletePreservesPostgresWhenClickHouseDeleteFails(t *testing.T
 	if _, ok := store.sessions[value.ID]; !ok {
 		t.Fatal("Postgres control row deleted after ClickHouse failure")
 	}
+}
+
+func TestSupervisorDeleteStopFailureRestoresWorkerOwnershipBeforeReturning(t *testing.T) {
+	root, cancelRoot := context.WithCancel(context.Background())
+	store := newFakeSessionStore()
+	store.stopErr = errors.New("postgres unavailable")
+	value, cipher := encryptedSession(t, 1)
+	store.sessions[value.ID] = value
+	started := make(chan struct{}, 2)
+	sink := &fakeEventSink{operations: &store.operations}
+	supervisor := NewSupervisor(root, store, sink, &fakeSessionReader{operations: &store.operations}, func(session.Session) *Worker {
+		return testWorker(store, cipher, blockingProber{started: started}, &fakeLookup{}, sink)
+	})
+	supervisor.stopTimeout = 20 * time.Millisecond
+	if err := supervisor.Start(context.Background(), value.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+
+	deleteCtx, cancelDelete := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- supervisor.Delete(deleteCtx, value.ID) }()
+	var err error
+	select {
+	case err = <-result:
+	case <-time.After(100 * time.Millisecond):
+		cancelDelete()
+		<-result
+		t.Fatal("Delete stop phase ignored the supervisor's bounded transition timeout")
+	}
+	cancelDelete()
+	if err == nil || !strings.Contains(err.Error(), "postgres unavailable") {
+		t.Fatalf("Delete with persistent Stop failure = %v, want persistence error", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("failed Delete left the durable running row without a replacement worker")
+	}
+	if len(store.operations) != 0 {
+		t.Fatalf("Delete continued after failed Stop: %v", store.operations)
+	}
+	stored, getErr := store.SessionByID(context.Background(), value.ID)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if stored.Status != session.StatusRunning {
+		t.Fatalf("durable status = %q, want running", stored.Status)
+	}
+
+	cancelRoot()
+	supervisor.Wait()
 }
 
 func TestSupervisorRootCancellationWaitsWithoutChangingStatus(t *testing.T) {
@@ -326,6 +522,21 @@ func (p blockingProber) Probe(ctx context.Context, _ proxy.ContextDialer, _ stri
 		}
 	}
 	<-ctx.Done()
+	return ProbeResult{Err: ctx.Err()}
+}
+
+type cancelGateProber struct {
+	started  chan struct{}
+	canceled chan struct{}
+	release  chan struct{}
+	once     sync.Once
+}
+
+func (p *cancelGateProber) Probe(ctx context.Context, _ proxy.ContextDialer, _ string, _ time.Duration) ProbeResult {
+	p.once.Do(func() { close(p.started) })
+	<-ctx.Done()
+	close(p.canceled)
+	<-p.release
 	return ProbeResult{Err: ctx.Err()}
 }
 

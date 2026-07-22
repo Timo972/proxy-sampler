@@ -164,6 +164,45 @@ func TestAggregateCapsAllFailedErrorAtTwoKiB(t *testing.T) {
 	}
 }
 
+func TestAggregateNormalizesShortInvalidUTF8Error(t *testing.T) {
+	raw := "upstream " + string([]byte{0xff}) + " failed"
+	sample := Aggregate([]ProbeResult{{Err: errors.New(raw)}}, netip.Addr{}, nil)
+	if sample.Error != "upstream � failed" {
+		t.Fatalf("normalized error = %q, want replacement rune", sample.Error)
+	}
+	if !utf8.ValidString(sample.Error) {
+		t.Fatal("short aggregate error remained invalid UTF-8")
+	}
+}
+
+func TestAggregateCapsReplacementExpansionAtRuneBoundary(t *testing.T) {
+	raw := strings.Repeat("a", maxSampleError-1) + string([]byte{0xff})
+	sample := Aggregate([]ProbeResult{{Err: errors.New(raw)}}, netip.Addr{}, nil)
+	if len(sample.Error) > maxSampleError {
+		t.Fatalf("normalized error size = %d, want <= %d", len(sample.Error), maxSampleError)
+	}
+	if !utf8.ValidString(sample.Error) {
+		t.Fatal("replacement expansion was capped inside a rune")
+	}
+	if sample.Error != strings.Repeat("a", maxSampleError-1) {
+		t.Fatalf("normalized capped suffix = %q, want incomplete replacement omitted", sample.Error[maxSampleError-8:])
+	}
+}
+
+func TestAggregateTreatsNegativeRTTAsFailedProbe(t *testing.T) {
+	ip := netip.MustParseAddr("203.0.113.9")
+	sample := Aggregate([]ProbeResult{{IP: ip, Country: "DE", RTT: -time.Millisecond}}, netip.Addr{}, nil)
+	if sample.ProbesOK != 0 || sample.ProbeOK[0] || sample.ProbeRTTs[0] != 0 || sample.PrimaryIP.IsValid() {
+		t.Fatalf("negative RTT probe was accepted: %#v", sample)
+	}
+	if sample.RTTMin != 0 || sample.RTTMed != 0 || sample.RTTMax != 0 {
+		t.Fatalf("negative RTT contaminated stats: %v/%v/%v", sample.RTTMin, sample.RTTMed, sample.RTTMax)
+	}
+	if !strings.Contains(sample.Error, "negative RTT") {
+		t.Fatalf("negative RTT error = %q", sample.Error)
+	}
+}
+
 func TestAggregateSaturatesUInt8CompatibleCounts(t *testing.T) {
 	const resultCount = 300
 	results := make([]ProbeResult, resultCount)

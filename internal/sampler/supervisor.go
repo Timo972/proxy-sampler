@@ -16,6 +16,11 @@ type sessionReader interface {
 	DeleteSession(context.Context, uuid.UUID) error
 }
 
+const (
+	stopTransitionTimeout = 5 * time.Second
+	stopTransitionRetry   = 100 * time.Millisecond
+)
+
 // Supervisor owns at most one prepared worker goroutine for each running row.
 type Supervisor struct {
 	store         session.Store
@@ -23,18 +28,21 @@ type Supervisor struct {
 	reader        sessionReader
 	workerFactory func(session.Session) *Worker
 
-	mu         sync.Mutex
-	workers    map[uuid.UUID]*runningWorker
-	operations map[uuid.UUID]*sessionOperation
-	closing    bool
-	root       context.Context
-	wg         sync.WaitGroup
-	now        func() time.Time
+	mu          sync.Mutex
+	workers     map[uuid.UUID]*runningWorker
+	operations  map[uuid.UUID]*sessionOperation
+	closing     bool
+	root        context.Context
+	wg          sync.WaitGroup
+	now         func() time.Time
+	stopTimeout time.Duration
+	retryAfter  func(time.Duration) <-chan time.Time
 }
 
 type runningWorker struct {
-	cancel context.CancelFunc
-	done   chan struct{}
+	cancel   context.CancelFunc
+	done     chan struct{}
+	prepared *PreparedWorker
 }
 
 type sessionOperation struct{ done chan struct{} }
@@ -49,7 +57,7 @@ func NewSupervisor(root context.Context, store session.Store, sink EventSink, re
 	return &Supervisor{
 		store: store, sink: sink, reader: reader, workerFactory: workerFactory,
 		workers: make(map[uuid.UUID]*runningWorker), operations: make(map[uuid.UUID]*sessionOperation),
-		root: root, now: time.Now,
+		root: root, now: time.Now, stopTimeout: stopTransitionTimeout, retryAfter: time.After,
 	}
 }
 
@@ -129,8 +137,12 @@ func (s *Supervisor) start(value session.Session, ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	return s.publishPrepared(value.ID, prepared)
+}
+
+func (s *Supervisor) publishPrepared(id uuid.UUID, prepared *PreparedWorker) error {
 	runCtx, cancel := context.WithCancel(s.root)
-	running := &runningWorker{cancel: cancel, done: make(chan struct{})}
+	running := &runningWorker{cancel: cancel, done: make(chan struct{}), prepared: prepared}
 	s.mu.Lock()
 	if s.closing {
 		s.mu.Unlock()
@@ -142,12 +154,12 @@ func (s *Supervisor) start(value session.Session, ctx context.Context) error {
 		cancel()
 		return err
 	}
-	if _, exists := s.workers[value.ID]; exists {
+	if _, exists := s.workers[id]; exists {
 		s.mu.Unlock()
 		cancel()
 		return nil
 	}
-	s.workers[value.ID] = running
+	s.workers[id] = running
 	s.wg.Add(1)
 	s.mu.Unlock()
 	go func() {
@@ -155,8 +167,8 @@ func (s *Supervisor) start(value session.Session, ctx context.Context) error {
 		defer close(running.done)
 		prepared.Run(runCtx)
 		s.mu.Lock()
-		if s.workers[value.ID] == running {
-			delete(s.workers, value.ID)
+		if s.workers[id] == running {
+			delete(s.workers, id)
 		}
 		s.mu.Unlock()
 	}()
@@ -166,30 +178,69 @@ func (s *Supervisor) start(value session.Session, ctx context.Context) error {
 // Stop cancels an owned worker, waits for it without holding the map mutex,
 // and only then marks the durable row stopped.
 func (s *Supervisor) Stop(ctx context.Context, id uuid.UUID) error {
-	return s.withSessionOperation(ctx, id, func() error { return s.stop(ctx, id) })
+	return s.withSessionOperation(ctx, id, func() error {
+		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.stopTimeout)
+		defer cancel()
+		return s.stopWithOwnership(stopCtx, id)
+	})
 }
 
-func (s *Supervisor) stop(ctx context.Context, id uuid.UUID) error {
+func (s *Supervisor) stopWithOwnership(ctx context.Context, id uuid.UUID) error {
+	prepared, err := s.stop(ctx, id)
+	if err == nil || errors.Is(err, session.ErrNotRunning) || errors.Is(err, session.ErrNotFound) {
+		return err
+	}
+	restoreCtx, cancelRestore := context.WithTimeout(context.Background(), s.stopTimeout)
+	defer cancelRestore()
+	var stale bool
+	var restoreErr error
+	if prepared != nil {
+		restoreErr = s.publishPrepared(id, prepared)
+	} else {
+		stale, restoreErr = s.startCurrent(restoreCtx, id)
+	}
+	if stale && (errors.Is(restoreErr, session.ErrNotRunning) || errors.Is(restoreErr, session.ErrNotFound)) {
+		return err
+	}
+	if restoreErr != nil {
+		return errors.Join(err, fmt.Errorf("restore worker ownership after failed stop: %w", restoreErr))
+	}
+	return err
+}
+
+func (s *Supervisor) stop(ctx context.Context, id uuid.UUID) (*PreparedWorker, error) {
 	s.mu.Lock()
 	running := s.workers[id]
 	s.mu.Unlock()
+	var prepared *PreparedWorker
 	if running != nil {
+		prepared = running.prepared
 		running.cancel()
 		select {
 		case <-running.done:
 		case <-ctx.Done():
-			return ctx.Err()
+			return prepared, ctx.Err()
 		}
 	} else {
 		value, err := s.store.SessionByID(ctx, id)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if value.Status != session.StatusRunning {
-			return session.ErrNotRunning
+			return nil, session.ErrNotRunning
 		}
 	}
-	return s.store.Stop(ctx, id, s.now())
+	for {
+		err := s.store.Stop(ctx, id, s.now())
+		if err == nil || errors.Is(err, session.ErrNotRunning) {
+			return prepared, err
+		}
+		select {
+		case <-ctx.Done():
+			return prepared, errors.Join(err, ctx.Err())
+		case <-s.retryAfter(stopTransitionRetry):
+		}
+	}
 }
 
 // Delete stops production, crosses the queue barrier, synchronously removes
@@ -201,7 +252,10 @@ func (s *Supervisor) Delete(ctx context.Context, id uuid.UUID) error {
 			return err
 		}
 		if value.Status == session.StatusRunning {
-			if err := s.stop(ctx, id); err != nil && !errors.Is(err, session.ErrNotRunning) {
+			stopCtx, cancelStop := context.WithTimeout(ctx, s.stopTimeout)
+			err := s.stopWithOwnership(stopCtx, id)
+			cancelStop()
+			if err != nil && !errors.Is(err, session.ErrNotRunning) {
 				return err
 			}
 		}

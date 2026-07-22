@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -20,6 +21,13 @@ type Service struct {
 	ttl       time.Duration
 	sem       *semaphore.Weighted
 	now       func() time.Time
+	keyMu     sync.Mutex
+	keys      map[netip.Addr]*enrichmentKey
+}
+
+type enrichmentKey struct {
+	token chan struct{}
+	refs  int
 }
 
 // NewService builds a cache-aware enrichment service. sem must be the shared
@@ -36,7 +44,7 @@ func NewService(store session.Store, providers []Provider, ttl time.Duration, se
 	}
 	return &Service{
 		store: store, providers: append([]Provider(nil), providers...), ttl: ttl, sem: sem,
-		now: time.Now,
+		now: time.Now, keys: make(map[netip.Addr]*enrichmentKey),
 	}, nil
 }
 
@@ -55,9 +63,23 @@ func DefaultProviders(client *http.Client, resolver HostResolver) []Provider {
 }
 
 func (s *Service) Lookup(ctx context.Context, ip netip.Addr) (session.Reputation, error) {
+	ip = ip.Unmap()
 	cached, ok, err := s.store.ReputationByIP(ctx, ip)
 	if err != nil {
 		return session.Reputation{}, fmt.Errorf("read reputation cache: %w", err)
+	}
+	if ok && s.now().Sub(cached.RefreshedAt) < s.ttl {
+		return cached, nil
+	}
+	releaseKey, err := s.acquireKey(ctx, ip)
+	if err != nil {
+		return session.Reputation{}, fmt.Errorf("acquire enrichment key: %w", err)
+	}
+	defer releaseKey()
+
+	cached, ok, err = s.store.ReputationByIP(ctx, ip)
+	if err != nil {
+		return session.Reputation{}, fmt.Errorf("recheck reputation cache: %w", err)
 	}
 	if ok && s.now().Sub(cached.RefreshedAt) < s.ttl {
 		return cached, nil
@@ -97,6 +119,46 @@ func (s *Service) Lookup(ctx context.Context, ip netip.Addr) (session.Reputation
 		return session.Reputation{}, errors.Join(errs...)
 	}
 	return reputation, errors.Join(errs...)
+}
+
+func (s *Service) acquireKey(ctx context.Context, ip netip.Addr) (func(), error) {
+	s.keyMu.Lock()
+	key := s.keys[ip]
+	if key == nil {
+		key = &enrichmentKey{token: make(chan struct{}, 1)}
+		key.token <- struct{}{}
+		s.keys[ip] = key
+	}
+	key.refs++
+	s.keyMu.Unlock()
+
+	select {
+	case <-key.token:
+		return func() {
+			key.token <- struct{}{}
+			s.releaseKeyReference(ip, key)
+		}, nil
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		s.releaseKeyReference(ip, key)
+		return nil, ctx.Err()
+	case <-key.token:
+		return func() {
+			key.token <- struct{}{}
+			s.releaseKeyReference(ip, key)
+		}, nil
+	}
+}
+
+func (s *Service) releaseKeyReference(ip netip.Addr, key *enrichmentKey) {
+	s.keyMu.Lock()
+	defer s.keyMu.Unlock()
+	key.refs--
+	if key.refs == 0 && s.keys[ip] == key {
+		delete(s.keys, ip)
+	}
 }
 
 func marshalProviderRaw(raw map[string]json.RawMessage) (json.RawMessage, error) {

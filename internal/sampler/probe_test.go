@@ -176,6 +176,27 @@ func TestHTTPProberRejectsMalformedTrace(t *testing.T) {
 	}
 }
 
+func TestParseTraceRejectsDuplicateKeys(t *testing.T) {
+	trace := "ip=203.0.113.7\nip=203.0.113.8\nloc=US\ncolo=IAD\n"
+	result := parseTrace(strings.NewReader(trace), time.Millisecond)
+	if result.Err == nil || !strings.Contains(result.Err.Error(), "duplicate") {
+		t.Fatalf("parseTrace duplicate key = %#v, want malformed duplicate error", result)
+	}
+	if result.IP.IsValid() {
+		t.Fatalf("duplicate trace produced IP %v", result.IP)
+	}
+}
+
+func TestParseTraceRejectsNegativeRTT(t *testing.T) {
+	result := parseTrace(strings.NewReader(validTrace), -time.Nanosecond)
+	if result.Err == nil || !strings.Contains(result.Err.Error(), "negative RTT") {
+		t.Fatalf("parseTrace negative RTT = %#v, want failure", result)
+	}
+	if result.IP.IsValid() || result.RTT != -time.Nanosecond {
+		t.Fatalf("negative RTT result = %#v, want no successful observation", result)
+	}
+}
+
 func TestHTTPProberCapsTraceBody(t *testing.T) {
 	body := strings.Repeat("padding=x\n", (64<<10)/len("padding=x\n")+1) + validTrace
 	_, dialer, target := probeServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

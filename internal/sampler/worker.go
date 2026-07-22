@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	maxConcurrentProbes    = 8
-	unknownPrimaryCategory = "unknown"
+	maxConcurrentProbes     = 8
+	terminalTransitionRetry = time.Second
+	unknownPrimaryCategory  = "unknown"
 )
 
 // ReputationLookup enriches one successful egress IP. Implementations may
@@ -171,8 +172,17 @@ func (p *PreparedWorker) maxSamplesReached() bool {
 }
 
 func (p *PreparedWorker) finish(ctx context.Context) {
-	if err := p.worker.store.Finish(ctx, p.session.ID, p.worker.clock.Now()); err != nil && ctx.Err() == nil {
+	for {
+		err := p.worker.store.Finish(ctx, p.session.ID, p.worker.clock.Now())
+		if err == nil || ctx.Err() != nil {
+			return
+		}
 		p.worker.logger.Warn("mark capped sampling session finished", "session_id", p.session.ID, "err", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-p.worker.clock.After(terminalTransitionRetry):
+		}
 	}
 }
 

@@ -391,6 +391,20 @@ func TestGeneratedRequestErrorsUseStableJSONShape(t *testing.T) {
 	}
 }
 
+func TestMalformedRFC3339QueryErrorsUseStableJSONShape(t *testing.T) {
+	value := sampleSession()
+	store := &reportStore{memoryStore: newMemoryStore()}
+	store.sessions = []session.Session{value}
+	handler := reportTestServer(t, store, &fakeReportReader{}).Handler()
+	for _, endpoint := range []string{"report", "samples", "export.csv"} {
+		t.Run(endpoint, func(t *testing.T) {
+			response := request(t, handler, http.MethodGet,
+				"/api/sessions/"+value.ID.String()+"/"+endpoint+"?from=not-rfc3339", "")
+			assertAPIError(t, response, http.StatusBadRequest, errorCodeInvalidRequest)
+		})
+	}
+}
+
 func TestControlRoutesAreRegisteredAtPublicPaths(t *testing.T) {
 	handler := testHandler(t, newMemoryStore(), &fakeControl{})
 	response := request(t, handler, http.MethodGet, "/api/api/sessions", "")
