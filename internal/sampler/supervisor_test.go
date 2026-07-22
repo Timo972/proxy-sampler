@@ -91,6 +91,10 @@ func TestSupervisorReenableResetsAndStarts(t *testing.T) {
 	if store.reenableCount.Load() != 1 {
 		t.Errorf("reenable count = %d, want 1", store.reenableCount.Load())
 	}
+
+	if err := supervisor.Stop(context.Background(), value.ID); err != nil {
+		t.Fatalf("Stop (teardown): %v", err)
+	}
 }
 
 func TestSupervisorStopCompletesAfterRequestCanceledWhileWaitingForWorker(t *testing.T) {

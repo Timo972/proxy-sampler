@@ -528,18 +528,28 @@ func (s *fakeSessionStore) Finish(_ context.Context, id uuid.UUID, _ time.Time) 
 	s.finishCount.Add(1)
 	return nil
 }
-func (s *fakeSessionStore) Reenable(_ context.Context, id uuid.UUID, _ time.Time) error {
+func (s *fakeSessionStore) Reenable(_ context.Context, id uuid.UUID, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v, ok := s.sessions[id]
 	if !ok {
 		return session.ErrNotFound
 	}
+	if v.Status == session.StatusRunning {
+		return session.ErrAlreadyRunning
+	}
 	v.Status = session.StatusRunning
 	v.SequenceOffset += v.Snapshot.SamplesTaken
 	v.Snapshot.SamplesTaken = 0
 	v.Snapshot.ProbesOK = 0
 	v.Snapshot.ProbesTotal = 0
+	v.Snapshot.LastSampleAt = nil
+	v.Snapshot.LastPrimaryIP = netip.Addr{}
+	v.Snapshot.LastRTT = nil
+	v.Snapshot.LastError = ""
+	startedAt := at
+	v.StartedAt = &startedAt
+	v.StoppedAt = nil
 	s.sessions[id] = v
 	s.reenableCount.Add(1)
 	return nil
