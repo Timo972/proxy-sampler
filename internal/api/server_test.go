@@ -328,6 +328,46 @@ func TestSessionByIDRedactsSecretsAndUsesZeroSuccessRate(t *testing.T) {
 	}
 }
 
+func TestSessionByIDExposesProxyUsernameNotPassword(t *testing.T) {
+	store := newMemoryStore()
+	handler := testHandler(t, store, &fakeControl{})
+	// Create through the API so the proxy is encrypted with the handler's cipher.
+	create := request(t, handler, http.MethodPost, "/api/sessions",
+		`{"name":"n","proxy":"`+testProxy+`","mode":"sticky","cadence_seconds":30}`)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create status = %d", create.Code)
+	}
+	id := store.sessions[0].ID
+
+	response := request(t, handler, http.MethodGet, "/api/sessions/"+id.String(), "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		ProxyUsername *string `json:"proxy_username"`
+	}
+	decodeJSON(t, response, &body)
+	if body.ProxyUsername == nil || *body.ProxyUsername != "proxy-user" {
+		t.Fatalf("proxy_username = %v, want proxy-user", body.ProxyUsername)
+	}
+	// Never leak the password.
+	if strings.Contains(response.Body.String(), "proxy-password") {
+		t.Error("detail response leaked proxy password")
+	}
+}
+
+func TestListSessionsOmitsProxyUsername(t *testing.T) {
+	store := newMemoryStore()
+	handler := testHandler(t, store, &fakeControl{})
+	request(t, handler, http.MethodPost, "/api/sessions",
+		`{"name":"n","proxy":"`+testProxy+`","mode":"sticky","cadence_seconds":30}`)
+
+	response := request(t, handler, http.MethodGet, "/api/sessions", "")
+	if strings.Contains(response.Body.String(), "proxy_username") {
+		t.Error("list response should not include proxy_username")
+	}
+}
+
 func TestSessionByIDMissingReturnsStableJSONError(t *testing.T) {
 	store := newMemoryStore()
 	handler := testHandler(t, store, &fakeControl{})

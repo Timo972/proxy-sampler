@@ -242,7 +242,17 @@ func (s *Server) SessionByID(ctx context.Context, request openapi.SessionByIDReq
 	if err != nil {
 		return nil, internalError()
 	}
-	return openapi.SessionByID200JSONResponse(mapSession(value)), nil
+	mapped := mapSession(value)
+	if s.cipher != nil {
+		if plaintext, err := s.cipher.Decrypt(value.ProxyCiphertext, value.ProxyNonce); err == nil {
+			if u, err := url.Parse(plaintext); err == nil {
+				if username := u.User.Username(); username != "" {
+					mapped.ProxyUsername = &username
+				}
+			}
+		}
+	}
+	return openapi.SessionByID200JSONResponse(mapped), nil
 }
 
 // StopSession stops a running sampler worker and its durable row.
