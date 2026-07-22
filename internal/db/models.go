@@ -62,6 +62,7 @@ type SamplingSession struct {
 	StoppedAt          pgtype.Timestamptz `json:"stopped_at"`
 	ClaimedBy          *string            `json:"claimed_by"`
 	LeaseUntil         pgtype.Timestamptz `json:"lease_until"`
+	SequenceOffset     int32              `json:"sequence_offset"`
 }
 
 type SessionIp struct {

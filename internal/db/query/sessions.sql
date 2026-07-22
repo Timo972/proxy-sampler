@@ -4,7 +4,7 @@ INSERT INTO sampling_sessions (
   cadence_seconds, probes_per_sample, probe_target, dial_timeout_ms,
   max_samples, max_duration_seconds, status, samples_taken, probes_ok,
   probes_total, distinct_ips, last_sample_at, last_primary_ip, last_rtt_ms,
-  last_error, created_at, started_at, stopped_at
+  last_error, created_at, started_at, stopped_at, sequence_offset
 ) VALUES (
   sqlc.arg(id), sqlc.arg(name), sqlc.arg(proxy_ciphertext), sqlc.arg(proxy_nonce),
   sqlc.arg(proxy_display), sqlc.arg(mode), sqlc.arg(cadence_seconds),
@@ -14,7 +14,7 @@ INSERT INTO sampling_sessions (
   sqlc.arg(distinct_ips), sqlc.narg(last_sample_at),
   NULLIF(sqlc.arg(last_primary_ip)::text, '')::inet, sqlc.narg(last_rtt_ms),
   NULLIF(sqlc.arg(last_error)::text, ''), sqlc.arg(created_at),
-  sqlc.narg(started_at), sqlc.narg(stopped_at)
+  sqlc.narg(started_at), sqlc.narg(stopped_at), sqlc.arg(sequence_offset)
 );
 
 -- name: Sessions :many
@@ -24,7 +24,7 @@ SELECT
   s.max_samples, s.max_duration_seconds, s.status, s.samples_taken, s.probes_ok,
   s.probes_total, s.distinct_ips, s.last_sample_at, CAST(COALESCE(s.last_primary_ip::text, '') AS text) AS last_primary_ip,
   COALESCE(r.category, '') AS last_category, s.last_rtt_ms, s.last_error,
-  s.created_at, s.started_at, s.stopped_at
+  s.created_at, s.started_at, s.stopped_at, s.sequence_offset
 FROM sampling_sessions AS s
 LEFT JOIN ip_reputation_cache AS r ON r.ip = s.last_primary_ip
 ORDER BY s.created_at DESC;
@@ -36,7 +36,7 @@ SELECT
   s.max_samples, s.max_duration_seconds, s.status, s.samples_taken, s.probes_ok,
   s.probes_total, s.distinct_ips, s.last_sample_at, CAST(COALESCE(s.last_primary_ip::text, '') AS text) AS last_primary_ip,
   COALESCE(r.category, '') AS last_category, s.last_rtt_ms, s.last_error,
-  s.created_at, s.started_at, s.stopped_at
+  s.created_at, s.started_at, s.stopped_at, s.sequence_offset
 FROM sampling_sessions AS s
 LEFT JOIN ip_reputation_cache AS r ON r.ip = s.last_primary_ip
 WHERE s.id = sqlc.arg(id);
@@ -48,7 +48,7 @@ SELECT
   s.max_samples, s.max_duration_seconds, s.status, s.samples_taken, s.probes_ok,
   s.probes_total, s.distinct_ips, s.last_sample_at, CAST(COALESCE(s.last_primary_ip::text, '') AS text) AS last_primary_ip,
   COALESCE(r.category, '') AS last_category, s.last_rtt_ms, s.last_error,
-  s.created_at, s.started_at, s.stopped_at
+  s.created_at, s.started_at, s.stopped_at, s.sequence_offset
 FROM sampling_sessions AS s
 LEFT JOIN ip_reputation_cache AS r ON r.ip = s.last_primary_ip
 WHERE s.status = 'running'

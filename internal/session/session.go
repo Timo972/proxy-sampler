@@ -38,6 +38,7 @@ type Session struct {
 	MaxSamples      *int
 	MaxDuration     *time.Duration
 	Status          Status
+	SequenceOffset  int
 	Snapshot        Snapshot
 	CreatedAt       time.Time
 	StartedAt       *time.Time

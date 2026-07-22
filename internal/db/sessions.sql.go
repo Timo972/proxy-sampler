@@ -46,7 +46,7 @@ INSERT INTO sampling_sessions (
   cadence_seconds, probes_per_sample, probe_target, dial_timeout_ms,
   max_samples, max_duration_seconds, status, samples_taken, probes_ok,
   probes_total, distinct_ips, last_sample_at, last_primary_ip, last_rtt_ms,
-  last_error, created_at, started_at, stopped_at
+  last_error, created_at, started_at, stopped_at, sequence_offset
 ) VALUES (
   $1, $2, $3, $4,
   $5, $6, $7,
@@ -56,7 +56,7 @@ INSERT INTO sampling_sessions (
   $17, $18,
   NULLIF($19::text, '')::inet, $20,
   NULLIF($21::text, ''), $22,
-  $23, $24
+  $23, $24, $25
 )
 `
 
@@ -85,6 +85,7 @@ type InsertSessionParams struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	StartedAt          pgtype.Timestamptz `json:"started_at"`
 	StoppedAt          pgtype.Timestamptz `json:"stopped_at"`
+	SequenceOffset     int32              `json:"sequence_offset"`
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -113,6 +114,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.CreatedAt,
 		arg.StartedAt,
 		arg.StoppedAt,
+		arg.SequenceOffset,
 	)
 	return err
 }
@@ -124,7 +126,7 @@ SELECT
   s.max_samples, s.max_duration_seconds, s.status, s.samples_taken, s.probes_ok,
   s.probes_total, s.distinct_ips, s.last_sample_at, CAST(COALESCE(s.last_primary_ip::text, '') AS text) AS last_primary_ip,
   COALESCE(r.category, '') AS last_category, s.last_rtt_ms, s.last_error,
-  s.created_at, s.started_at, s.stopped_at
+  s.created_at, s.started_at, s.stopped_at, s.sequence_offset
 FROM sampling_sessions AS s
 LEFT JOIN ip_reputation_cache AS r ON r.ip = s.last_primary_ip
 WHERE s.status = 'running'
@@ -157,6 +159,7 @@ type RunningSessionsRow struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	StartedAt          pgtype.Timestamptz `json:"started_at"`
 	StoppedAt          pgtype.Timestamptz `json:"stopped_at"`
+	SequenceOffset     int32              `json:"sequence_offset"`
 }
 
 func (q *Queries) RunningSessions(ctx context.Context) ([]RunningSessionsRow, error) {
@@ -194,6 +197,7 @@ func (q *Queries) RunningSessions(ctx context.Context) ([]RunningSessionsRow, er
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.StoppedAt,
+			&i.SequenceOffset,
 		); err != nil {
 			return nil, err
 		}
@@ -212,7 +216,7 @@ SELECT
   s.max_samples, s.max_duration_seconds, s.status, s.samples_taken, s.probes_ok,
   s.probes_total, s.distinct_ips, s.last_sample_at, CAST(COALESCE(s.last_primary_ip::text, '') AS text) AS last_primary_ip,
   COALESCE(r.category, '') AS last_category, s.last_rtt_ms, s.last_error,
-  s.created_at, s.started_at, s.stopped_at
+  s.created_at, s.started_at, s.stopped_at, s.sequence_offset
 FROM sampling_sessions AS s
 LEFT JOIN ip_reputation_cache AS r ON r.ip = s.last_primary_ip
 WHERE s.id = $1
@@ -244,6 +248,7 @@ type SessionByIDRow struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	StartedAt          pgtype.Timestamptz `json:"started_at"`
 	StoppedAt          pgtype.Timestamptz `json:"stopped_at"`
+	SequenceOffset     int32              `json:"sequence_offset"`
 }
 
 func (q *Queries) SessionByID(ctx context.Context, id uuid.UUID) (SessionByIDRow, error) {
@@ -275,6 +280,7 @@ func (q *Queries) SessionByID(ctx context.Context, id uuid.UUID) (SessionByIDRow
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.StoppedAt,
+		&i.SequenceOffset,
 	)
 	return i, err
 }
@@ -374,7 +380,7 @@ SELECT
   s.max_samples, s.max_duration_seconds, s.status, s.samples_taken, s.probes_ok,
   s.probes_total, s.distinct_ips, s.last_sample_at, CAST(COALESCE(s.last_primary_ip::text, '') AS text) AS last_primary_ip,
   COALESCE(r.category, '') AS last_category, s.last_rtt_ms, s.last_error,
-  s.created_at, s.started_at, s.stopped_at
+  s.created_at, s.started_at, s.stopped_at, s.sequence_offset
 FROM sampling_sessions AS s
 LEFT JOIN ip_reputation_cache AS r ON r.ip = s.last_primary_ip
 ORDER BY s.created_at DESC
@@ -406,6 +412,7 @@ type SessionsRow struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	StartedAt          pgtype.Timestamptz `json:"started_at"`
 	StoppedAt          pgtype.Timestamptz `json:"stopped_at"`
+	SequenceOffset     int32              `json:"sequence_offset"`
 }
 
 func (q *Queries) Sessions(ctx context.Context) ([]SessionsRow, error) {
@@ -443,6 +450,7 @@ func (q *Queries) Sessions(ctx context.Context) ([]SessionsRow, error) {
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.StoppedAt,
+			&i.SequenceOffset,
 		); err != nil {
 			return nil, err
 		}
