@@ -1,0 +1,11 @@
+.git
+.github
+.superpowers
+.env
+.env.*
+bin
+web/node_modules
+web/coverage
+web/dist
+*.local
+*.log
