@@ -102,6 +102,21 @@ func (s *Store) Finish(ctx context.Context, id uuid.UUID, at time.Time) error {
 	return nil
 }
 
+func (s *Store) Reenable(ctx context.Context, id uuid.UUID, at time.Time) error {
+	rows, err := s.q.ReenableSession(ctx, ReenableSessionParams{ID: id, StartedAt: timestamp(at)})
+	if err != nil {
+		return fmt.Errorf("reenable session: %w", err)
+	}
+	if rows == 0 {
+		// No row transitioned: either it does not exist or it is already running.
+		if _, err := s.SessionByID(ctx, id); err != nil {
+			return err // ErrNotFound or a real error
+		}
+		return session.ErrAlreadyRunning
+	}
+	return nil
+}
+
 func (s *Store) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := s.q.DeleteSession(ctx, id); err != nil {
 		return fmt.Errorf("delete session: %w", err)

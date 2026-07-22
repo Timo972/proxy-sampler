@@ -108,6 +108,54 @@ func TestFinishOnlyTransitionsRunningSessions(t *testing.T) {
 	}
 }
 
+func TestReenableFoldsOffsetAndResetsCounters(t *testing.T) {
+	store := testStore(t)
+	s := insertTestSession(t, store)
+	// Simulate a prior run: 5 samples, some probes, one IP.
+	snap := session.Snapshot{SamplesTaken: 5, ProbesOK: 12, ProbesTotal: 15, DistinctIPs: 1}
+	if err := store.SaveTick(context.Background(), s.ID, snap, []session.IPHit{{IP: netip.MustParseAddr("203.0.113.7"), SeenAt: s.CreatedAt, Hits: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Stop(context.Background(), s.ID, s.CreatedAt.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	reenabledAt := s.CreatedAt.Add(2 * time.Minute)
+	if err := store.Reenable(context.Background(), s.ID, reenabledAt); err != nil {
+		t.Fatalf("reenable: %v", err)
+	}
+
+	got, err := store.SessionByID(context.Background(), s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != session.StatusRunning {
+		t.Errorf("status = %q, want running", got.Status)
+	}
+	if got.SequenceOffset != 5 {
+		t.Errorf("sequence_offset = %d, want 5", got.SequenceOffset)
+	}
+	if got.Snapshot.SamplesTaken != 0 || got.Snapshot.ProbesOK != 0 || got.Snapshot.ProbesTotal != 0 {
+		t.Errorf("counters not reset: %+v", got.Snapshot)
+	}
+	if got.StartedAt == nil || !got.StartedAt.Equal(reenabledAt) || got.StoppedAt != nil {
+		t.Errorf("timestamps: started=%v stopped=%v", got.StartedAt, got.StoppedAt)
+	}
+	// IP inventory is kept.
+	ips, err := store.SessionIPs(context.Background(), s.ID)
+	if err != nil || len(ips) != 1 {
+		t.Fatalf("session ips = %d (err %v), want 1 kept", len(ips), err)
+	}
+	// Re-enabling a running session is rejected.
+	if err := store.Reenable(context.Background(), s.ID, reenabledAt); !errors.Is(err, session.ErrAlreadyRunning) {
+		t.Fatalf("second reenable error = %v, want ErrAlreadyRunning", err)
+	}
+	// Unknown session is not found.
+	if err := store.Reenable(context.Background(), uuid.New(), reenabledAt); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("unknown reenable error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestSaveTickUpdatesSnapshotAndIPInventory(t *testing.T) {
 	store := testStore(t)
 	s := insertTestSession(t, store)

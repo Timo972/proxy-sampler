@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	ErrNotFound   = errors.New("session not found")
-	ErrNotRunning = errors.New("session is not running")
+	ErrNotFound       = errors.New("session not found")
+	ErrNotRunning     = errors.New("session is not running")
+	ErrAlreadyRunning = errors.New("session is already running")
 )
 
 type Store interface {
@@ -21,6 +22,7 @@ type Store interface {
 	RunningSessions(ctx context.Context) ([]Session, error)
 	Stop(ctx context.Context, id uuid.UUID, at time.Time) error
 	Finish(ctx context.Context, id uuid.UUID, at time.Time) error
+	Reenable(ctx context.Context, id uuid.UUID, at time.Time) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	SaveTick(ctx context.Context, id uuid.UUID, snapshot Snapshot, hits []IPHit) error
 	SessionIPs(ctx context.Context, id uuid.UUID) ([]IPRecord, error)

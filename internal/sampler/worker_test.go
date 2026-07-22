@@ -498,6 +498,7 @@ func (s *fakeSessionStore) Finish(_ context.Context, id uuid.UUID, _ time.Time) 
 	s.finishCount.Add(1)
 	return nil
 }
+func (s *fakeSessionStore) Reenable(context.Context, uuid.UUID, time.Time) error { return nil }
 func (s *fakeSessionStore) Delete(_ context.Context, id uuid.UUID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -64,6 +64,21 @@ UPDATE sampling_sessions
 SET status = 'finished', stopped_at = sqlc.arg(stopped_at)
 WHERE id = sqlc.arg(id) AND status = 'running';
 
+-- name: ReenableSession :execrows
+UPDATE sampling_sessions
+SET status = 'running',
+    sequence_offset = sequence_offset + samples_taken,
+    samples_taken = 0,
+    probes_ok = 0,
+    probes_total = 0,
+    last_sample_at = NULL,
+    last_primary_ip = NULL,
+    last_rtt_ms = NULL,
+    last_error = NULL,
+    started_at = sqlc.arg(started_at),
+    stopped_at = NULL
+WHERE id = sqlc.arg(id) AND status IN ('stopped', 'finished');
+
 -- name: DeleteSession :exec
 DELETE FROM sampling_sessions WHERE id = sqlc.arg(id);
 

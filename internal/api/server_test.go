@@ -533,6 +533,7 @@ type memoryStore struct {
 	deleteErr          error
 	rejectCanceledStop bool
 	deleteCalls        int
+	reenableErr        error
 }
 
 func newMemoryStore() *memoryStore { return &memoryStore{sessions: []session.Session{}} }
@@ -583,6 +584,29 @@ func (s *memoryStore) Stop(ctx context.Context, id uuid.UUID, at time.Time) erro
 }
 
 func (s *memoryStore) Finish(context.Context, uuid.UUID, time.Time) error { return nil }
+
+func (s *memoryStore) Reenable(_ context.Context, id uuid.UUID, at time.Time) error {
+	if s.reenableErr != nil {
+		return s.reenableErr
+	}
+	for i := range s.sessions {
+		if s.sessions[i].ID == id {
+			if s.sessions[i].Status == session.StatusRunning {
+				return session.ErrAlreadyRunning
+			}
+			s.sessions[i].SequenceOffset += s.sessions[i].Snapshot.SamplesTaken
+			s.sessions[i].Snapshot.SamplesTaken = 0
+			s.sessions[i].Snapshot.ProbesOK = 0
+			s.sessions[i].Snapshot.ProbesTotal = 0
+			started := at
+			s.sessions[i].Status = session.StatusRunning
+			s.sessions[i].StartedAt = &started
+			s.sessions[i].StoppedAt = nil
+			return nil
+		}
+	}
+	return session.ErrNotFound
+}
 
 func (s *memoryStore) Delete(_ context.Context, id uuid.UUID) error {
 	s.deleteCalls++

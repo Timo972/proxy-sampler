@@ -119,6 +119,35 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 	return err
 }
 
+const reenableSession = `-- name: ReenableSession :execrows
+UPDATE sampling_sessions
+SET status = 'running',
+    sequence_offset = sequence_offset + samples_taken,
+    samples_taken = 0,
+    probes_ok = 0,
+    probes_total = 0,
+    last_sample_at = NULL,
+    last_primary_ip = NULL,
+    last_rtt_ms = NULL,
+    last_error = NULL,
+    started_at = $1,
+    stopped_at = NULL
+WHERE id = $2 AND status IN ('stopped', 'finished')
+`
+
+type ReenableSessionParams struct {
+	StartedAt pgtype.Timestamptz `json:"started_at"`
+	ID        uuid.UUID          `json:"id"`
+}
+
+func (q *Queries) ReenableSession(ctx context.Context, arg ReenableSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reenableSession, arg.StartedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const runningSessions = `-- name: RunningSessions :many
 SELECT
   s.id, s.name, s.proxy_ciphertext, s.proxy_nonce, s.proxy_display, s.mode,

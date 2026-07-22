@@ -14,6 +14,7 @@ type Querier interface {
 	DeleteSession(ctx context.Context, id uuid.UUID) error
 	FinishSession(ctx context.Context, arg FinishSessionParams) (int64, error)
 	InsertSession(ctx context.Context, arg InsertSessionParams) error
+	ReenableSession(ctx context.Context, arg ReenableSessionParams) (int64, error)
 	ReputationByIP(ctx context.Context, ip string) (ReputationByIPRow, error)
 	RunningSessions(ctx context.Context) ([]RunningSessionsRow, error)
 	SessionByID(ctx context.Context, id uuid.UUID) (SessionByIDRow, error)
