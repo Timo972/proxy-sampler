@@ -218,6 +218,21 @@ export function useStopSession() {
   })
 }
 
+export function useReenableSession() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api<Session>(`/api/sessions/${id}/reenable`, { method: 'POST' }),
+    onSuccess: async (_data, id) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['sessions'] }),
+        queryClient.invalidateQueries({ queryKey: ['sessions', id] }),
+        queryClient.invalidateQueries({ queryKey: ['session-report', id] }),
+        queryClient.invalidateQueries({ queryKey: ['session-samples', id] }),
+      ])
+    },
+  })
+}
+
 export function useSession(id: string) {
   const visible = useDocumentVisible()
   return useQuery({

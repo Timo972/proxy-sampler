@@ -316,6 +316,38 @@ describe('SessionPage', () => {
     expect(callsFor(fetchMock, `/api/sessions/${sessionID}/samples?page=1&page_size=50`)).toBeGreaterThan(1)
   })
 
+  it('does not offer re-enable for a running session', async () => {
+    vi.stubGlobal('fetch', createFetch())
+    renderSession()
+
+    await screen.findByRole('heading', { name: 'Frankfurt sticky' })
+    expect(screen.queryByRole('button', { name: /re-enable/i })).not.toBeInTheDocument()
+  })
+
+  it('offers re-enable for a stopped session, confirms, and invalidates queries', async () => {
+    let status: Session['status'] = 'stopped'
+    const baseFetch = createFetch({ session: () => ({ ...runningSession, status }) })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/reenable') && init?.method === 'POST') {
+        status = 'running'
+        return jsonResponse({ ...runningSession, status: 'running' })
+      }
+      return baseFetch(input, init)
+    })
+    const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true)
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('confirm', confirm)
+    renderSession()
+
+    const reenable = await screen.findByRole('button', { name: /re-enable/i })
+    await userEvent.click(reenable)
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}/reenable`)).toBe(0)
+    await userEvent.click(reenable)
+    await waitFor(() => expect(callsFor(fetchMock, `/api/sessions/${sessionID}/reenable`)).toBe(1))
+    await waitFor(() => expect(screen.getByText('Running')).toBeInTheDocument())
+    expect(confirm).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps tab and sample page state in browser history and only fetches the selected page', async () => {
     const fetchMock = createFetch()
     vi.stubGlobal('fetch', fetchMock)

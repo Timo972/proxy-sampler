@@ -1,4 +1,4 @@
-import { AlertTriangle, Download, Square } from 'lucide-react'
+import { AlertTriangle, Download, RotateCcw, Square } from 'lucide-react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 
 import { GroupedSamplesTable } from '../components/report/grouped-samples-table'
@@ -14,7 +14,7 @@ import { Alert } from '../components/ui/alert'
 import { Button } from '../components/ui/button'
 import { Skeleton } from '../components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
-import { APIError, useSession, useSessionReport, useSessionSamples, useStopSession } from '../lib/api'
+import { APIError, useReenableSession, useSession, useSessionReport, useSessionSamples, useStopSession } from '../lib/api'
 import { formatPercent, formatTimestampWithZone } from '../lib/format'
 
 type ReportTab = 'overview' | 'reputation' | 'samples'
@@ -30,6 +30,7 @@ export function SessionPage() {
   const report = useSessionReport(id, running)
   const samples = useSessionSamples(id, page, tab === 'samples', running)
   const stop = useStopSession()
+  const reenable = useReenableSession()
 
   if (session.isPending) return <SessionLoading includeSamples={tab === 'samples'} />
   if (session.error instanceof APIError && session.error.status === 404) return <NotFound />
@@ -50,7 +51,10 @@ export function SessionPage() {
   }
 
   const confirmStop = () => {
-    if (window.confirm(`Stop “${session.data.name}”? Sampling cannot be resumed.`)) stop.mutate(id)
+    if (window.confirm(`Stop “${session.data.name}”? You can re-enable it later.`)) stop.mutate(id)
+  }
+  const confirmReenable = () => {
+    if (window.confirm(`Re-enable “${session.data.name}”? Sampling resumes; progress counters reset while prior samples are kept.`)) reenable.mutate(id)
   }
 
   return (
@@ -63,10 +67,12 @@ export function SessionPage() {
         </div>
         <div className="session-actions">
           {session.data.status === 'running' && <Button type="button" variant="danger" onClick={confirmStop} disabled={stop.isPending}><Square size={14} fill="currentColor" aria-hidden="true" />{stop.isPending ? 'Stopping…' : 'Stop session'}</Button>}
+          {session.data.status !== 'running' && <Button type="button" onClick={confirmReenable} disabled={reenable.isPending}><RotateCcw size={14} aria-hidden="true" />{reenable.isPending ? 'Re-enabling…' : 'Re-enable'}</Button>}
           <a className="button button-secondary" href={`/api/sessions/${id}/export.csv`} download><Download size={16} aria-hidden="true" />Export CSV</a>
         </div>
       </header>
       {stop.isError && <Alert className="inline-alert"><AlertTriangle aria-hidden="true" /><div><strong>Could not stop session</strong><p>{errorMessage(stop.error)}</p></div></Alert>}
+      {reenable.isError && <Alert className="inline-alert"><AlertTriangle aria-hidden="true" /><div><strong>Could not re-enable session</strong><p>{errorMessage(reenable.error)}</p></div></Alert>}
       <SummaryStrip session={session.data} />
       <div className="report-meta" aria-live="polite">{report.dataUpdatedAt > 0 ? `Last updated ${formatTimestampWithZone(new Date(report.dataUpdatedAt).toISOString())}` : 'Waiting for report update'}</div>
 
