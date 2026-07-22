@@ -82,6 +82,9 @@ func NewServer(store session.Store, control Control, cipher *cryptox.Cipher, def
 // Handler registers generated paths directly on a root chi router.
 func (s *Server) Handler() http.Handler {
 	router := chi.NewRouter()
+	router.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, &apiError{status: http.StatusNotFound, code: errorCodeNotFound, message: "route not found"})
+	})
 	strict := openapi.NewStrictHandlerWithOptions(s, nil, openapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  requestErrorHandler,
 		ResponseErrorHandlerFunc: responseErrorHandler,
