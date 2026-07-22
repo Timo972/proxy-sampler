@@ -7,6 +7,7 @@ import { CompositionAreaChart, PoolCompositionChart } from '../components/report
 import { RiskHistogram } from '../components/report/risk-histogram'
 import { StickinessTimeline } from '../components/report/stickiness-timeline'
 import { SummaryStrip } from '../components/report/summary-strip'
+import { TargetingPanel } from '../components/report/targeting-panel'
 import { LatencyChart, PoolGrowthChart, SuccessRateChart } from '../components/report/timeseries-charts'
 import { SessionStatusBadge } from '../components/session-status-badge'
 import { Alert } from '../components/ui/alert'
@@ -76,6 +77,7 @@ export function SessionPage() {
           <TabsTrigger className="tab-trigger" value="samples">Samples</TabsTrigger>
         </TabsList>
         <TabsContent className="tab-content" value="overview">
+          <TargetingPanel session={session.data} report={report.data} />
           <ReportBoundary report={report}>
             {report.data && <div className="report-grid">
               <SuccessRateChart data={report.data.series} />

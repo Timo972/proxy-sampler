@@ -37,6 +37,7 @@ const runningSession = {
   id: sessionID,
   name: 'Frankfurt sticky',
   proxy_display: 'proxy.example:1080',
+  proxy_username: null,
   mode: 'sticky',
   status: 'running',
   cadence_seconds: 30,

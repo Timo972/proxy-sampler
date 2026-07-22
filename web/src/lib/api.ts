@@ -8,6 +8,7 @@ export interface Session {
   id: string
   name: string
   proxy_display: string
+  proxy_username?: string | null
   mode: SessionMode
   status: SessionStatus
   cadence_seconds: number
