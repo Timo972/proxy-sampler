@@ -26,6 +26,13 @@ interface KeySpec {
   category: AttributeCategory
 }
 
+// Own-property lookup that ignores inherited Object.prototype members
+// (constructor, toString, valueOf, hasOwnProperty, __proto__, ...), which
+// would otherwise resolve truthy via the prototype chain on plain-object maps.
+function lookup<T>(map: Record<string, T>, key: string): T | undefined {
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined
+}
+
 // Recognized attribute keys and their aliases.
 const KEYS: Record<string, KeySpec> = {
   country: { label: 'Country', category: 'geo' },
@@ -60,9 +67,9 @@ export function parseProxyAttributes(username: string | null | undefined): Parse
   const raw: string[] = []
   for (let i = 0; i < tokens.length; i++) {
     const key = tokens[i].toLowerCase()
-    const spec = KEYS[key]
+    const spec = lookup(KEYS, key)
     if (spec && i + 1 < tokens.length) {
-      attributes.push({ category: spec.category, key: CANONICAL_KEY[key] ?? key, label: spec.label, value: tokens[i + 1] })
+      attributes.push({ category: spec.category, key: lookup(CANONICAL_KEY, key) ?? key, label: spec.label, value: tokens[i + 1] })
       i++
       continue
     }
@@ -124,7 +131,7 @@ export function compareAttributes(parsed: ParsedAttributes, report: SessionRepor
 
   const type = attribute(parsed, 'type')
   if (type) {
-    const requested = NETWORK_ALIASES[type.value.toLowerCase()] ?? type.value.toLowerCase()
+    const requested = lookup(NETWORK_ALIASES, type.value.toLowerCase()) ?? type.value.toLowerCase()
     const observed = report ? dominantNetwork(report) : undefined
     rows.push(observed
       ? { label: 'Network type', requested, observed: `${observed.type} (${pct(observed.share)})`, verdict: observed.type === requested ? (observed.share >= 0.6 ? 'match' : 'partial') : 'mismatch' }
@@ -137,8 +144,8 @@ export function compareAttributes(parsed: ParsedAttributes, report: SessionRepor
   }
 
   const isp = attribute(parsed, 'isp')
-  if (isp && report) {
-    const observed = report.ips[0]?.isp ?? ''
+  if (isp) {
+    const observed = report ? (report.ips[0]?.isp ?? '') : ''
     rows.push({ label: 'ISP', requested: isp.value, observed: observed || '—', verdict: observed && observed.toLowerCase().includes(isp.value.toLowerCase()) ? 'match' : observed ? 'mismatch' : 'unknown' })
   }
 

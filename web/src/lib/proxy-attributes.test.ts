@@ -21,6 +21,18 @@ describe('parseProxyAttributes', () => {
     expect(parseProxyAttributes('')).toEqual({ attributes: [], raw: [] })
     expect(() => parseProxyAttributes('---___:::')).not.toThrow()
   })
+
+  it('treats Object.prototype-named tokens as unrecognized rather than mis-parsing them', () => {
+    const parsed = parseProxyAttributes('country-us-constructor-x')
+    const byKey = Object.fromEntries(parsed.attributes.map((a) => [a.key, a]))
+    expect(byKey.country.value).toBe('us')
+    expect(parsed.raw).toContain('constructor')
+    expect(parsed.raw).toContain('x')
+    for (const attr of parsed.attributes) {
+      expect(attr.category).not.toBeUndefined()
+      expect(attr.label).not.toBeUndefined()
+    }
+  })
 })
 
 describe('compareAttributes', () => {
@@ -56,5 +68,19 @@ describe('compareAttributes', () => {
     const city = rows.find((r) => r.label === 'City')!
     expect(city.observed).toBe('—')
     expect(city.verdict).toBe('unknown')
+  })
+
+  it('marks a country request as partial when the dominant share is below the match threshold', () => {
+    const mixedReport: SessionReport = {
+      ...report,
+      ips: [
+        { ip: '203.0.113.1', category: 'residential', country: 'US', isp: 'Acme', asn: 'AS1', risk_score: null, greynoise_class: '', dnsbl_listed: false, dnsbl_hits: [], first_seen: '', last_seen: '', hit_count: 6 },
+        { ip: '203.0.113.2', category: 'residential', country: 'DE', isp: 'Acme', asn: 'AS1', risk_score: null, greynoise_class: '', dnsbl_listed: false, dnsbl_hits: [], first_seen: '', last_seen: '', hit_count: 4 },
+      ],
+    }
+    const rows = compareAttributes(parseProxyAttributes('country-us'), mixedReport)
+    const country = rows.find((r) => r.label === 'Country')!
+    expect(country.observed).toContain('US')
+    expect(country.verdict).toBe('partial')
   })
 })
