@@ -24,12 +24,21 @@ describe('responsive CSS contract', () => {
   })
 
   it('keeps the report structural, scroll-contained, and touch operable without fluid type or viewport bleed', () => {
-  const mobileStyles = styles.slice(styles.lastIndexOf('@media (max-width: 759px)'))
-  expect(styles).toMatch(/\.session-page\s*\{[^}]*min-width:\s*0[^}]*max-width:\s*100%/)
-  expect(styles).toMatch(/\.sample-table-wrap\s*\{[^}]*max-width:\s*100%[^}]*overflow-x:\s*auto/)
-  expect(styles).not.toMatch(/\.session-title h1\s*\{[^}]*font-size:\s*clamp\(/)
-  expect(mobileStyles).not.toMatch(/\.sample-table-wrap\s*\{[^}]*margin-inline-end:\s*calc\(/)
-  expect(mobileStyles).toMatch(/\.chart-data summary,\s*\.sample-disclosure,\s*\.clipped-value\s*\{[^}]*min-height:\s*2\.75rem/)
-  expect(mobileStyles).toMatch(/\.ip-details-trigger\s*\{[^}]*min-height:\s*2\.75rem/)
+    const mobileStyles = styles.slice(styles.lastIndexOf('@media (max-width: 759px)'))
+    expect(styles).toMatch(/\.session-page\s*\{[^}]*min-width:\s*0[^}]*max-width:\s*100%/)
+    expect(styles).toMatch(/\.sample-table-wrap\s*\{[^}]*max-width:\s*100%[^}]*overflow-x:\s*auto/)
+    expect(styles).not.toMatch(/\.session-title h1\s*\{[^}]*font-size:\s*clamp\(/)
+    expect(mobileStyles).not.toMatch(/\.sample-table-wrap\s*\{[^}]*margin-inline-end:\s*calc\(/)
+    expect(mobileStyles).toMatch(/\.chart-data summary,\s*\.sample-disclosure,\s*\.clipped-value\s*\{[^}]*min-height:\s*2\.75rem/)
+    expect(mobileStyles).toMatch(/\.ip-details-trigger\s*\{[^}]*min-height:\s*2\.75rem/)
+  })
+
+  it('keeps bordered tooltip surfaces restrained without ghost-card shadows', () => {
+    const chartTooltip = styles.match(/\.chart-tooltip\s*\{([^}]*)\}/)?.[1] ?? ''
+    const portalledTooltip = styles.match(/\.tooltip-content\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(chartTooltip).toMatch(/border:\s*1px solid var\(--border\)/)
+    expect(chartTooltip).not.toMatch(/box-shadow:/)
+    expect(portalledTooltip).toMatch(/border:\s*1px solid var\(--border\)/)
+    expect(portalledTooltip).not.toMatch(/box-shadow:/)
   })
 })

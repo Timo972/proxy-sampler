@@ -91,7 +91,7 @@ export function SessionPage() {
           <ReportBoundary report={report}>
             {report.data && <>
               <div className="reputation-summary" aria-label="Reputation summary">
-                <span><strong>{report.data.reputation_summary.total_ips}</strong> enriched IPs</span>
+                <span><strong>{report.data.reputation_summary.total_ips}</strong> observed IPs</span>
                 <span><strong>{report.data.reputation_summary.flagged_ips}</strong> flagged ({formatPercent(report.data.reputation_summary.flagged_percent / 100)})</span>
                 <span><strong>{report.data.reputation_summary.dnsbl_hit_ips}</strong> DNSBL hits</span>
               </div>

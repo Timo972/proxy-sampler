@@ -41,10 +41,10 @@ describe('GroupedSamplesTable', () => {
     const disclosures = screen.getAllByRole('button', { name: /sample \d+ details/i })
     expect(disclosures.map((button) => button.textContent)).toEqual(['Sample 12', 'Sample 11'])
     expect(disclosures[0]).toHaveAttribute('aria-expanded', 'false')
-  const parent = disclosures[0].closest('tr')
-  expect(parent).not.toBeNull()
-  expect(within(parent!).getByText('Changed')).toHaveClass('badge')
-  expect(within(parent!).getByText('probe 1 timed out')).toBeInTheDocument()
+    const parent = disclosures[0].closest('tr')
+    expect(parent).not.toBeNull()
+    expect(within(parent!).getByText('Changed')).toHaveClass('badge')
+    expect(within(parent!).getByText('probe 1 timed out')).toBeInTheDocument()
 
     await userEvent.click(disclosures[0])
     expect(disclosures[0]).toHaveAttribute('aria-expanded', 'true')
@@ -102,6 +102,17 @@ describe('GroupedSamplesTable', () => {
     renderTable({ items: [], page: 1, page_size: 50, total: 0 })
     expect(screen.getByText('Samples will appear after the first sampling interval completes.')).toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Sample pages' })).not.toBeInTheDocument()
+  })
+
+  it('recovers an out-of-range empty page directly to the last valid page', async () => {
+    renderTable({ items: [], page: 4, page_size: 50, total: 140 }, '?tab=samples&page=4')
+
+    expect(screen.getByText('Page 4 has no samples.')).toBeInTheDocument()
+    expect(screen.queryByText('Samples will appear after the first sampling interval completes.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Go to last page' }))
+    expect(screen.getByTestId('sample-location')).toHaveTextContent('?tab=samples&page=3')
   })
 })
 

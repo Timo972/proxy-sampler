@@ -28,13 +28,14 @@ export function SuccessRateChart({ data }: { data: SeriesPoint[] }) {
 }
 
 export function LatencyChart({ data }: { data: SeriesPoint[] }) {
+  const measured = data.filter((point) => point.success_rate > 0)
   return (
     <ChartSection title="Latency">
-      {data.length === 0 ? <Empty>Latency data will appear after a successful probe.</Empty> : <>
-        <p className="chart-summary">Latest median latency was {formatMilliseconds(data.at(-1)?.latency_p50_ms)}; latest p95 was {formatMilliseconds(data.at(-1)?.latency_p95_ms)}.</p>
+      {measured.length === 0 ? <Empty>Latency data will appear after a successful probe.</Empty> : <>
+        <p className="chart-summary">Latest median latency was {formatMilliseconds(measured.at(-1)?.latency_p50_ms)}; latest p95 was {formatMilliseconds(measured.at(-1)?.latency_p95_ms)}.</p>
         <div className="chart-frame" role="img" aria-label="Median and p95 latency in milliseconds over time">
           <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={data} accessibilityLayer>
+            <LineChart data={measured} accessibilityLayer>
               <CartesianGrid stroke="var(--border)" vertical={false} />
               <XAxis dataKey="at" tickFormatter={formatChartTime} minTickGap={28} />
               <YAxis domain={[0, 'auto']} tickFormatter={(value: number) => `${value} ms`} width={62} />
@@ -44,7 +45,7 @@ export function LatencyChart({ data }: { data: SeriesPoint[] }) {
             </LineChart>
           </ResponsiveContainer>
         </div>
-        <SeriesDataTable caption="Latency chart data" data={data} columns={[
+        <SeriesDataTable caption="Latency chart data" data={measured} columns={[
           ['p50', (point) => formatMilliseconds(point.latency_p50_ms)],
           ['p95', (point) => formatMilliseconds(point.latency_p95_ms)],
         ]} />

@@ -15,9 +15,23 @@ export function GroupedSamplesTable({ page }: { page: SamplePage }) {
     return byTime || right.sample_seq - left.sample_seq
   })
   const pageCount = Math.max(1, Math.ceil(page.total / page.page_size))
+  const changePage = (nextPage: number) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', 'samples')
+    next.set('page', String(nextPage))
+    setSearchParams(next)
+  }
 
-  if (items.length === 0) {
+  if (items.length === 0 && page.total === 0) {
     return <p className="section-empty">Samples will appear after the first sampling interval completes.</p>
+  }
+  if (items.length === 0) {
+    return <div className="sample-empty-recovery">
+      <p className="section-empty">Page {page.page} has no samples.</p>
+      <nav className="pagination" aria-label="Sample pages">
+        <Button type="button" variant="secondary" size="small" onClick={() => changePage(pageCount)}>Go to last page</Button>
+      </nav>
+    </div>
   }
 
   const toggle = (sampleSeq: number) => {
@@ -27,13 +41,6 @@ export function GroupedSamplesTable({ page }: { page: SamplePage }) {
       else next.add(sampleSeq)
       return next
     })
-  }
-
-  const changePage = (nextPage: number) => {
-    const next = new URLSearchParams(searchParams)
-    next.set('tab', 'samples')
-    next.set('page', String(nextPage))
-    setSearchParams(next)
   }
 
   return (
@@ -52,7 +59,7 @@ export function GroupedSamplesTable({ page }: { page: SamplePage }) {
               <th scope="col">RTT min / med / max</th>
               <th scope="col">Category</th>
               <th scope="col">Risk</th>
-        <th scope="col">Error</th>
+              <th scope="col">Error</th>
             </tr>
           </thead>
           {items.map((sample) => (
@@ -114,12 +121,12 @@ function SampleRows({ sample, open, onToggle }: { sample: SampleEvent; open: boo
           <td className="numeric">{sample.probes_ok} / {sample.probes_attempted}</td>
           <td className="mono">{sample.primary_ip ?? '—'}</td>
           <td className="numeric">{sample.distinct_ips}</td>
-      <td><span className={`badge ${sample.ip_changed ? 'sample-change' : 'sample-stable'}`}>{sample.ip_changed ? 'Changed' : 'Stable'}</span></td>
+          <td><span className={`badge ${sample.ip_changed ? 'sample-change' : 'sample-stable'}`}>{sample.ip_changed ? 'Changed' : 'Stable'}</span></td>
           <td className="numeric">{sample.new_ips}</td>
           <td className="numeric">{formatMilliseconds(sample.rtt_min_ms)} / {formatMilliseconds(sample.rtt_med_ms)} / {formatMilliseconds(sample.rtt_max_ms)}</td>
           <td className="capitalize">{sample.primary_category || 'unknown'}</td>
           <td className="numeric">{sample.primary_risk}</td>
-      <td className="compact-cell" title={sample.error || undefined}>{sample.error || '—'}</td>
+          <td className="compact-cell" title={sample.error || undefined}>{sample.error || '—'}</td>
         </tr>
         {open && Array.from({ length: Math.max(0, sample.probes_attempted) }, (_, index) => (
           <ProbeRow key={index} sample={sample} index={index} />
@@ -139,7 +146,7 @@ function ProbeRow({ sample, index }: { sample: SampleEvent; index: number }) {
       <td>{success ? 'Succeeded' : 'Failed'}</td>
       <td className="mono">{ip}</td>
       <td className="numeric">{formatMilliseconds(success && Number.isFinite(rtt) ? rtt : null)}</td>
-    <td colSpan={7}>{success ? '—' : sample.error || 'Probe did not complete.'}</td>
+      <td colSpan={7}>{success ? '—' : sample.error || 'Probe did not complete.'}</td>
     </tr>
   )
 }

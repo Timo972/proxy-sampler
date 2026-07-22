@@ -164,7 +164,7 @@ describe('SessionPage', () => {
     expect(screen.getByText('Success data will appear after the first completed sample.')).toBeInTheDocument()
     expect(screen.getByText('Latency data will appear after a successful probe.')).toBeInTheDocument()
     expect(screen.getByText('Composition appears once an egress IP is classified.')).toBeInTheDocument()
-  expect(screen.getByText('Pool composition appears once an egress IP is classified.')).toBeInTheDocument()
+    expect(screen.getByText('Pool composition appears once an egress IP is classified.')).toBeInTheDocument()
     expect(screen.getByText('Stickiness segments appear after an IP has been observed.')).toBeInTheDocument()
     expect(screen.getByText('Pool growth appears after an egress IP is observed.')).toBeInTheDocument()
 
@@ -173,6 +173,15 @@ describe('SessionPage', () => {
     expect(screen.getByText('IP reputation rows appear after an egress IP is observed.')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('tab', { name: 'Samples' }))
     expect(await screen.findByText('Samples will appear after the first sampling interval completes.')).toBeInTheDocument()
+  })
+
+  it('describes the reputation total as observed IPs', async () => {
+    vi.stubGlobal('fetch', createFetch())
+    renderSession('?tab=reputation')
+
+    const summary = await screen.findByLabelText('Reputation summary')
+    expect(summary).toHaveTextContent('3 observed IPs')
+    expect(summary).not.toHaveTextContent('3 enriched IPs')
   })
 
   it('offers a real route home when the session does not exist', async () => {
@@ -231,52 +240,52 @@ describe('SessionPage', () => {
   })
 
   it('polls only the exact selected sample page with detail and report, then stops all work when hidden or unmounted', async () => {
-  vi.useFakeTimers()
-  const fetchMock = createFetch({ samples: { ...samplePage, page: 2 } })
-  vi.stubGlobal('fetch', fetchMock)
-  const view = renderSession('?tab=samples&page=2')
+    vi.useFakeTimers()
+    const fetchMock = createFetch({ samples: { ...samplePage, page: 2 } })
+    vi.stubGlobal('fetch', fetchMock)
+    const view = renderSession('?tab=samples&page=2')
 
-  await act(async () => { await Promise.resolve(); await Promise.resolve() })
-  const sampleURL = `/api/sessions/${sessionID}/samples?page=2&page_size=50`
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBe(1)
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}/report`)).toBe(1)
-  expect(callsFor(fetchMock, sampleURL)).toBe(1)
-  expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/samples')).map(([input]) => String(input))).toEqual([sampleURL])
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const sampleURL = `/api/sessions/${sessionID}/samples?page=2&page_size=50`
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBe(1)
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}/report`)).toBe(1)
+    expect(callsFor(fetchMock, sampleURL)).toBe(1)
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/samples')).map(([input]) => String(input))).toEqual([sampleURL])
 
-  await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBe(2)
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}/report`)).toBe(2)
-  expect(callsFor(fetchMock, sampleURL)).toBe(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBe(2)
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}/report`)).toBe(2)
+    expect(callsFor(fetchMock, sampleURL)).toBe(2)
 
-  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
-  act(() => document.dispatchEvent(new Event('visibilitychange')))
-  await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBe(2)
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}/report`)).toBe(2)
-  expect(callsFor(fetchMock, sampleURL)).toBe(2)
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    act(() => document.dispatchEvent(new Event('visibilitychange')))
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBe(2)
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}/report`)).toBe(2)
+    expect(callsFor(fetchMock, sampleURL)).toBe(2)
 
-  view.unmount()
-  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
-  act(() => document.dispatchEvent(new Event('visibilitychange')))
-  await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBe(2)
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}/report`)).toBe(2)
-  expect(callsFor(fetchMock, sampleURL)).toBe(2)
+    view.unmount()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    act(() => document.dispatchEvent(new Event('visibilitychange')))
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBe(2)
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}/report`)).toBe(2)
+    expect(callsFor(fetchMock, sampleURL)).toBe(2)
   })
 
   it('does not poll stopped sessions', async () => {
     vi.useFakeTimers()
     const fetchMock = createFetch({ session: { ...runningSession, status: 'stopped' } })
     vi.stubGlobal('fetch', fetchMock)
-  renderSession('?tab=samples&page=1')
+    renderSession('?tab=samples&page=1')
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBe(1)
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBe(1)
     expect(callsFor(fetchMock, `/api/sessions/${sessionID}/report`)).toBe(1)
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}/samples?page=1&page_size=50`)).toBe(1)
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}/samples?page=1&page_size=50`)).toBe(1)
     await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBe(1)
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBe(1)
     expect(callsFor(fetchMock, `/api/sessions/${sessionID}/report`)).toBe(1)
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}/samples?page=1&page_size=50`)).toBe(1)
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}/samples?page=1&page_size=50`)).toBe(1)
   })
 
   it('confirms stop, then invalidates detail and report queries', async () => {
@@ -292,7 +301,7 @@ describe('SessionPage', () => {
     const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true)
     vi.stubGlobal('fetch', fetchMock)
     vi.stubGlobal('confirm', confirm)
-  renderSession('?tab=samples&page=1')
+    renderSession('?tab=samples&page=1')
 
     const stop = await screen.findByRole('button', { name: 'Stop session' })
     await userEvent.click(stop)
@@ -303,7 +312,7 @@ describe('SessionPage', () => {
     expect(confirm).toHaveBeenCalledTimes(2)
     expect(callsFor(fetchMock, `/api/sessions/${sessionID}`)).toBeGreaterThan(1)
     expect(callsFor(fetchMock, `/api/sessions/${sessionID}/report`)).toBeGreaterThan(1)
-  expect(callsFor(fetchMock, `/api/sessions/${sessionID}/samples?page=1&page_size=50`)).toBeGreaterThan(1)
+    expect(callsFor(fetchMock, `/api/sessions/${sessionID}/samples?page=1&page_size=50`)).toBeGreaterThan(1)
   })
 
   it('keeps tab and sample page state in browser history and only fetches the selected page', async () => {

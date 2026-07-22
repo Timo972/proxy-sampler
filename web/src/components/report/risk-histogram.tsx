@@ -4,22 +4,22 @@ import type { RiskBucket } from '../../lib/api'
 import { ChartSection, Empty } from './timeseries-charts'
 
 export function RiskHistogram({ data }: { data: RiskBucket[] }) {
-  const thresholdBucket = data.find((bucket) => bucket.min <= 70 && bucket.max >= 70)?.label
-  if (data.length === 0) {
+  const total = data.reduce((sum, bucket) => sum + bucket.count, 0)
+  if (total === 0) {
     return <ChartSection title="Risk distribution"><Empty>Risk distribution appears after reputation enrichment.</Empty></ChartSection>
   }
-  const total = data.reduce((sum, bucket) => sum + bucket.count, 0)
+  const chartData = data.map((bucket) => ({ ...bucket, midpoint: (bucket.min + bucket.max) / 2 }))
   return (
     <ChartSection title="Risk distribution">
       <p className="chart-summary">{total} enriched IPs are grouped by risk score. Scores at or above 70 cross the flagged threshold.</p>
       <div className="chart-frame" role="img" aria-label="IP risk-score histogram with the flag threshold marked at 70">
         <ResponsiveContainer width="100%" height={240}>
-          <BarChart data={data} accessibilityLayer>
+          <BarChart data={chartData} accessibilityLayer>
             <CartesianGrid stroke="var(--border)" vertical={false} />
-            <XAxis dataKey="label" />
+            <XAxis type="number" dataKey="midpoint" domain={[0, 100]} ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]} allowDataOverflow />
             <YAxis domain={[0, 'dataMax']} allowDecimals={false} width={42} />
             <Tooltip content={<RiskTooltip />} />
-            {thresholdBucket && <ReferenceLine x={thresholdBucket} stroke="var(--danger)" strokeDasharray="4 3" label={{ value: '≥70', fill: 'var(--danger)', position: 'top' }} />}
+            <ReferenceLine x={70} stroke="var(--danger)" strokeDasharray="4 3" label={{ value: '≥70', fill: 'var(--danger)', position: 'top' }} />
             <Bar dataKey="count" name="IPs" fill="var(--chart-datacenter)" isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>

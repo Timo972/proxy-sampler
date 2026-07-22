@@ -254,7 +254,7 @@ p { text-wrap: pretty; }
 .chart-summary { min-height: 2.5rem; margin-bottom: 0.5rem; color: var(--muted-foreground); font-size: 0.8125rem; line-height: 1.5; }
 .chart-frame { min-width: 0; width: 100%; overflow: visible; }
 .chart-frame .recharts-cartesian-axis-tick text { fill: var(--muted-foreground); font-size: 0.7rem; }
-.chart-tooltip { display: flex; max-width: 18rem; flex-direction: column; gap: 0.25rem; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.625rem 0.75rem; background: var(--background); box-shadow: 0 0.5rem 1.5rem oklch(0.2 0.02 120 / 0.12); font-size: 0.75rem; }
+.chart-tooltip { display: flex; max-width: 18rem; flex-direction: column; gap: 0.25rem; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.625rem 0.75rem; background: var(--background); font-size: 0.75rem; }
 .chart-tooltip strong { color: var(--foreground); }
 .chart-data { margin-top: 0.5rem; color: var(--muted-foreground); font-size: 0.75rem; }
 .chart-data summary { display: inline-flex; min-height: 2.25rem; align-items: center; cursor: pointer; font-weight: 650; }
@@ -301,7 +301,7 @@ p { text-wrap: pretty; }
 .risk-unknown { color: var(--muted-foreground); }
 .clipped-value { display: inline-flex; max-width: 12rem; min-height: 2rem; align-items: center; gap: 0.3rem; overflow: hidden; border: 0; padding: 0; background: transparent; color: inherit; font-size: inherit; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
 .clipped-value svg { flex: 0 0 auto; color: var(--muted-foreground); }
-.tooltip-content { z-index: var(--z-tooltip); max-width: min(24rem, calc(100vw - 2rem)); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.625rem; background: var(--foreground); color: var(--background); box-shadow: 0 0.5rem 1.5rem oklch(0.2 0.02 120 / 0.18); overflow-wrap: anywhere; font-size: 0.75rem; line-height: 1.4; }
+.tooltip-content { z-index: var(--z-tooltip); max-width: min(24rem, calc(100vw - 2rem)); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.625rem; background: var(--foreground); color: var(--background); overflow-wrap: anywhere; font-size: 0.75rem; line-height: 1.4; }
 .ip-records { display: none; }
 
 .sample-table-wrap { max-width: 100%; overflow-x: auto; border-block: 1px solid var(--border); }
