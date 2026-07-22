@@ -34,6 +34,7 @@ const (
 type Control interface {
 	Start(context.Context, uuid.UUID) error
 	Stop(context.Context, uuid.UUID) error
+	Reenable(context.Context, uuid.UUID) error
 	Delete(context.Context, uuid.UUID) error
 }
 
@@ -256,6 +257,29 @@ func (s *Server) StopSession(ctx context.Context, request openapi.StopSessionReq
 	case errors.Is(err, session.ErrNotFound):
 		return nil, notFound()
 	case errors.Is(err, session.ErrNotRunning):
+		return nil, sessionNotRunning()
+	default:
+		return nil, internalError()
+	}
+}
+
+// ReenableSession restarts a stopped or finished session with reset per-run
+// counters, preserving prior samples, and returns the refreshed snapshot.
+func (s *Server) ReenableSession(ctx context.Context, request openapi.ReenableSessionRequestObject) (openapi.ReenableSessionResponseObject, error) {
+	if s.control == nil || s.store == nil {
+		return nil, internalError()
+	}
+	err := s.control.Reenable(ctx, request.Id)
+	switch {
+	case err == nil:
+		value, err := s.store.SessionByID(ctx, request.Id)
+		if err != nil {
+			return nil, internalError()
+		}
+		return openapi.ReenableSession200JSONResponse(mapSession(value)), nil
+	case errors.Is(err, session.ErrNotFound):
+		return nil, notFound()
+	case errors.Is(err, session.ErrAlreadyRunning):
 		return nil, sessionNotRunning()
 	default:
 		return nil, internalError()

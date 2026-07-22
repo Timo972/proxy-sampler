@@ -356,6 +356,9 @@ type ServerInterface interface {
 	// (GET /api/sessions/{id}/export.csv)
 	ExportSessionCSV(w http.ResponseWriter, r *http.Request, id SessionID, params ExportSessionCSVParams)
 
+	// (POST /api/sessions/{id}/reenable)
+	ReenableSession(w http.ResponseWriter, r *http.Request, id SessionID)
+
 	// (GET /api/sessions/{id}/report)
 	SessionReport(w http.ResponseWriter, r *http.Request, id SessionID, params SessionReportParams)
 
@@ -398,6 +401,11 @@ func (_ Unimplemented) SessionByID(w http.ResponseWriter, r *http.Request, id Se
 
 // (GET /api/sessions/{id}/export.csv)
 func (_ Unimplemented) ExportSessionCSV(w http.ResponseWriter, r *http.Request, id SessionID, params ExportSessionCSVParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /api/sessions/{id}/reenable)
+func (_ Unimplemented) ReenableSession(w http.ResponseWriter, r *http.Request, id SessionID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -561,6 +569,32 @@ func (siw *ServerInterfaceWrapper) ExportSessionCSV(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ExportSessionCSV(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReenableSession operation middleware
+func (siw *ServerInterfaceWrapper) ReenableSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SessionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReenableSession(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -874,6 +908,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/sessions/{id}/export.csv", wrapper.ExportSessionCSV)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/sessions/{id}/reenable", wrapper.ReenableSession)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/sessions/{id}/report", wrapper.SessionReport)
@@ -1284,6 +1321,100 @@ func (response ExportSessionCSV503JSONResponse) VisitExportSessionCSVResponse(w 
 	return err
 }
 
+type ReenableSessionRequestObject struct {
+	Id SessionID `json:"id"`
+}
+
+type ReenableSessionResponseObject interface {
+	VisitReenableSessionResponse(w http.ResponseWriter) error
+}
+
+type ReenableSession200JSONResponse Session
+
+func (response ReenableSession200JSONResponse) VisitReenableSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReenableSession400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response ReenableSession400JSONResponse) VisitReenableSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReenableSession404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response ReenableSession404JSONResponse) VisitReenableSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReenableSession409JSONResponse struct{ ConflictJSONResponse }
+
+func (response ReenableSession409JSONResponse) VisitReenableSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReenableSession500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response ReenableSession500JSONResponse) VisitReenableSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReenableSession503JSONResponse struct {
+	DependencyUnavailableJSONResponse
+}
+
+func (response ReenableSession503JSONResponse) VisitReenableSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SessionReportRequestObject struct {
 	Id     SessionID `json:"id"`
 	Params SessionReportParams
@@ -1636,6 +1767,9 @@ type StrictServerInterface interface {
 	// (GET /api/sessions/{id}/export.csv)
 	ExportSessionCSV(ctx context.Context, request ExportSessionCSVRequestObject) (ExportSessionCSVResponseObject, error)
 
+	// (POST /api/sessions/{id}/reenable)
+	ReenableSession(ctx context.Context, request ReenableSessionRequestObject) (ReenableSessionResponseObject, error)
+
 	// (GET /api/sessions/{id}/report)
 	SessionReport(ctx context.Context, request SessionReportRequestObject) (SessionReportResponseObject, error)
 
@@ -1815,6 +1949,32 @@ func (sh *strictHandler) ExportSessionCSV(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// ReenableSession operation middleware
+func (sh *strictHandler) ReenableSession(w http.ResponseWriter, r *http.Request, id SessionID) {
+	var request ReenableSessionRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReenableSession(ctx, request.(ReenableSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReenableSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReenableSessionResponseObject); ok {
+		if err := validResponse.VisitReenableSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // SessionReport operation middleware
 func (sh *strictHandler) SessionReport(w http.ResponseWriter, r *http.Request, id SessionID, params SessionReportParams) {
 	var request SessionReportRequestObject
@@ -1948,45 +2108,46 @@ func (sh *strictHandler) Readyz(w http.ResponseWriter, r *http.Request) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"7Ftfc9s2Ev8qHNw9MpHS2O1Vb42dXj3T6XnsXl8yHQ5ErCTUIIAAoG3Vo+9+gz/8D1KSZScPl7zEJoHd",
-	"H3YXix+W6yeUi0IKDtxotHhCEitcgAHlfvtZicL+TzlaoM8lqC1KEccFoAVa2Xcp0vkGCmwHrYQqsEEL",
-	"RLCBN4YWgFJkttIO1kZRvka7XYpuQWsq+NVlLVhis2nkUoJSpOBzSRUQtDCqhKiWsnQjhwp+F2OQjTge",
-	"8M6C0VJwDc4kHzC5gc8laGN/ywU3wN2PWEpGc2yo4LO/tOD2WaPrnwpWaIH+MWvMPfNv9eyjUkJ5VQR0",
-	"rqi0QtACXfF7zChJVFC4S9GF4CtG8y+g/Aa0KFUOiTbYQJJXincpugQJnADPt//l+B5ThpcMXh/RT0kV",
-	"FgmpESRUJ2ULxS5FV9yA4ph5QV/AS15dokHdg0rAD0zRb8L8LEpOvqCvuDDJyum0g8I8K/ZCATYQ9l4r",
-	"gDEh1ArB7FoJCcpQG+YrzDSkSLYePaEcW4NDpiEXnLhHBX6kRVmgxXfvzn44+9f7789+SFFBuX/4rt5N",
-	"lBtYgzMKoZhldq+J0mSFk0JghUtm0OLdfD6fp/uk2iFDuQV+zEipnFmPgshLFuLXp5q4aI0LyeDFJAri",
-	"9gtwO+UT0obmdzZRSSEY+nOQhaoM5pT/CnxtNsEQBeX175FpUoklZAarNZhu9lQUjY3XmQQVVtxd8Pn5",
-	"PvdKJR63btIEsBQ9KGrgP5xtvY18lq1S/ie/2kpYMFc6CMDGTmL5F/jUVO/5YwI7eGNgjQK0xuvYux7e",
-	"3AOsxseA/QKYWWM89ZTb7FrqdjCIu0gE9BSGWVFFgpGhmtjWqIOBcvP9GWq5NrrDbMIlGTaHHp0pojJq",
-	"1tZeOhKCNliZo0D07EYl6khprarBlQ6tFTP01fWNeBhaGmseXXWODayF2sZfipKbkXeE6yXLNtQTNGrA",
-	"Z83BuPAAK4W3zTxGtQHSmrAUggHmdsSKKm0yDcAP9+lawZYLqiHLGdZxJBtqMreiZ7h4JGaojj9n+OgV",
-	"KKrvMp0L1U1uVTqtse1L47HQqp3cuNRjT11cdJQPbdnzWcf1HW+11902dyxMr4VgF5ZLaOrZwiA1YINz",
-	"sCQm5O0J7xRiScOhMDlOgaYEuKGY7R9c8jsuHvi+gT17ByhdXWl7NY3kMbv8W4kHs7kW1IdqbyMfkekI",
-	"1Yby3GRUHp/XegtzuagjMAb/BjChHPwO7J1njOZ3G1FqiG97KbRZK9Cxtz0s9dC0LTWOR5bGJc3bsiiw",
-	"z2W9QKuiubLSdFisGF6vgRw3WILKoZd4iCiXLlLG93oQyMti6eUZYTA7RHXPYM287gKGCNOePaJGpfru",
-	"Q5nfQSQ86wQ7bRiGl8Di7AY/TifAyPan/LgpPet4MF6OBxDyZHz1wgfUaVtzpUSRjTERavmkVHBPRalP",
-	"4EZGxFXEtnYFqJo1CiNmk1vHUT7eQyxj9bNQhMPZzayzKboBFYOO0Lks32C+HqMTHB7GNUtFbVbIJmlQ",
-	"NcjbcuQAHg63h+qYVnv/CaBq6rRXcJ9KeTHiLkbAWgaIT1PG6HDT7c9tR1Bsrs6wMVDILoPrr08HZJFj",
-	"2JjM3l7HlLr3QKbfUz763jPmTMPn6J4Zm3ACgW9p7EiLGKxtnd6B2onlJnA7C+5Yp2PKSDD3YrEdeP0w",
-	"aEVTtdnGN/p1uH5293kdRvUPU1WjdsqIBVpQsedej9eQafr3AUPdEXgqCfIrC+ja6iv5UZuBoqBfgs51",
-	"KPGRZ0Edad0qSoSOTBGQOkCfcxwxbIDn20yez8PePVJ7LeDH8+cJaC4KR0Lv3RyOLRCUeW4POIUN7OOA",
-	"e1bQupWczOY7sAbuGZg7HkOdmEhPvv+EWnCEWL5InTd3Befj6kWR2vCzasH7eRAlB3xLCrfsmhDtpQ1u",
-	"eIzoHDfzQPbj5rhjaYrUdLKCNiGYptyyV/H/San9pYrpnpwdQI6ixffRYePH7EhVPiNUS4a3UzXZzOA7",
-	"4CNkb3/xdW/oDKvdquTcfxPQRkjp+NiKcqo3QKLuCcNOg/FSx0SftZDqY3Pf5vVHjGCB4deMmP97MTfM",
-	"kH3HdTlvJ1IGp1CPEbcS9sRxcQNSqAi76l+xpgipL5zHqKgQLMu7tcopQf3SZiVi7cp6B+PpVwIjyFRd",
-	"3cp0U96aEjqsh1Wl5w3VRqwVLg4G2CoDRbBpx3oPvw60SHJMms2PdWFxUlAzcnBL85A60rq+iTg7auWB",
-	"zVI0Viy77SDvkf97UPYKsRGMRMs8h7FaO/1wS7svcRETF0Ao5qdiUaE6djieup42wNRzn19mW0Uat2B8",
-	"LUPnWAWUr1xjjqHGZmZ0bfNj4i+nKvnp+gql6B6U56To3dv527kFKiRwLClaoPdv52/fu7ug2bi1zrCk",
-	"M+3zknsQzmXreIf7iqAF+pVqc1sN6jXzfDefH9WcceAG88R6aOVB30aNa5eic48lJrnGPOu2trhZ7/fP",
-	"ivfrODxS6IjNOt0ioR0LtPkgyPbFmlmiHSm7bii63oCBz969GIbaVaOuScKxmGBOksCArN3PDvFWq1fs",
-	"Kzl4l3Z3yeyJkp3vuWHguU/X85fuedvzHdOf+bkxQ3mJzzXOmRc9PaVuqHITftw/4aLVtPZ19lc0JQWT",
-	"fdheXZ6akU6MbgIGU/alfPaVUlyrpfVTXE4zZNa0p+7+jO6eGTxaCvw21/ejZ85HNySIurj9Y7+XDTya",
-	"WRAZ6VBdUu7ZUKQ9tevZi40SXDCxpjlmiQT1xt0CkovbPxKPHKVoA5iEFt8Lj+HNJdVt2t1gGGj8Fiyx",
-	"YEn3DnbN1AeM+12Mhp6qb19TeSXc0V4/swRFsSh0vB5IEvAnAfm32PlqsdMqq00Fz23dBPd60dN82oqE",
-	"zm/wANq8cd1OicRrSMQqWStRShtOAd23OHr9OErjf0QRvsg1rm7at6e/CYwGphGy/6cnx53TY9eYWyPk",
-	"c6hsVYn8RmW7N4mN62H+ezSF/BLev2LuCG3UkbxxrUQOWidUJ5jRe3iuofxSFWCyHV/pjX/9igtt+vsi",
-	"a629REEnWEHi4J4cGq8P/CeTMMDaJILD1B/xuH//CwAA//8=",
+	"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",
+	"AAAA//8=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

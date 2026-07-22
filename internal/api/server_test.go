@@ -355,6 +355,52 @@ func TestStopSessionReturnsNoContent(t *testing.T) {
 	}
 }
 
+func TestReenableSessionRestartsStoppedSession(t *testing.T) {
+	store := newMemoryStore()
+	s := sampleSession()
+	s.Status = session.StatusStopped
+	s.Snapshot.SamplesTaken = 5
+	store.sessions = append(store.sessions, s)
+	// The fake control stands in for the supervisor: its Reenable performs the
+	// real store transition so the handler's refreshed read reflects it.
+	control := &fakeControl{reenable: func(ctx context.Context, id uuid.UUID) error {
+		return store.Reenable(ctx, id, time.Now().UTC())
+	}}
+	handler := testHandler(t, store, control)
+
+	response := request(t, handler, http.MethodPost, "/api/sessions/"+s.ID.String()+"/reenable", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", response.Code, response.Body.String())
+	}
+	if len(control.reenabled) != 1 || control.reenabled[0] != s.ID {
+		t.Fatalf("reenabled = %v, want [%s]", control.reenabled, s.ID)
+	}
+	var body struct {
+		Status       string `json:"status"`
+		SamplesTaken int    `json:"samples_taken"`
+	}
+	decodeJSON(t, response, &body)
+	if body.Status != "running" || body.SamplesTaken != 0 {
+		t.Errorf("body = %+v, want running with samples_taken 0", body)
+	}
+}
+
+func TestReenableSessionConflictWhenAlreadyRunning(t *testing.T) {
+	store := newMemoryStore()
+	control := &fakeControl{reenableErr: session.ErrAlreadyRunning}
+	handler := testHandler(t, store, control)
+	response := request(t, handler, http.MethodPost, "/api/sessions/"+uuid.New().String()+"/reenable", "")
+	assertAPIError(t, response, http.StatusConflict, "session_not_running")
+}
+
+func TestReenableSessionNotFound(t *testing.T) {
+	store := newMemoryStore()
+	control := &fakeControl{reenableErr: session.ErrNotFound}
+	handler := testHandler(t, store, control)
+	response := request(t, handler, http.MethodPost, "/api/sessions/"+uuid.New().String()+"/reenable", "")
+	assertAPIError(t, response, http.StatusNotFound, "not_found")
+}
+
 func TestDeleteSessionMapsMissingToNotFound(t *testing.T) {
 	control := &fakeControl{deleteErr: session.ErrNotFound}
 	handler := testHandler(t, newMemoryStore(), control)
@@ -501,9 +547,10 @@ func sampleSession() session.Session {
 }
 
 type fakeControl struct {
-	startErr, stopErr, deleteErr error
-	started, stopped, deleted    []uuid.UUID
-	start                        func(context.Context, uuid.UUID) error
+	startErr, stopErr, reenableErr, deleteErr error
+	started, stopped, reenabled, deleted      []uuid.UUID
+	start                                     func(context.Context, uuid.UUID) error
+	reenable                                  func(context.Context, uuid.UUID) error
 }
 
 func (f *fakeControl) Start(ctx context.Context, id uuid.UUID) error {
@@ -517,6 +564,14 @@ func (f *fakeControl) Start(ctx context.Context, id uuid.UUID) error {
 func (f *fakeControl) Stop(_ context.Context, id uuid.UUID) error {
 	f.stopped = append(f.stopped, id)
 	return f.stopErr
+}
+
+func (f *fakeControl) Reenable(ctx context.Context, id uuid.UUID) error {
+	f.reenabled = append(f.reenabled, id)
+	if f.reenable != nil {
+		return f.reenable(ctx, id)
+	}
+	return f.reenableErr
 }
 
 func (f *fakeControl) Delete(_ context.Context, id uuid.UUID) error {

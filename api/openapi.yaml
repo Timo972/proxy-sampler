@@ -74,6 +74,23 @@ paths:
         '409': {$ref: '#/components/responses/Conflict'}
         '500': {$ref: '#/components/responses/InternalError'}
         '503': {$ref: '#/components/responses/DependencyUnavailable'}
+  /api/sessions/{id}/reenable:
+    parameters:
+      - $ref: '#/components/parameters/SessionID'
+    post:
+      operationId: reenableSession
+      responses:
+        '200':
+          description: Session re-enabled and running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/DependencyUnavailable'}
   /api/sessions/{id}/report:
     parameters:
       - $ref: '#/components/parameters/SessionID'
