@@ -8,18 +8,27 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
+	DeleteRun(ctx context.Context, id uuid.UUID) error
 	DeleteSession(ctx context.Context, id uuid.UUID) error
 	FinishSession(ctx context.Context, arg FinishSessionParams) (int64, error)
+	InsertRun(ctx context.Context, arg InsertRunParams) error
+	InsertRunSession(ctx context.Context, arg InsertRunSessionParams) error
 	InsertSession(ctx context.Context, arg InsertSessionParams) error
 	ReenableSession(ctx context.Context, arg ReenableSessionParams) (int64, error)
 	ReputationByIP(ctx context.Context, ip string) (ReputationByIPRow, error)
+	RunByID(ctx context.Context, id uuid.UUID) (RunByIDRow, error)
+	RunIPObservations(ctx context.Context, runID pgtype.UUID) ([]RunIPObservationsRow, error)
+	RunSessions(ctx context.Context, runID pgtype.UUID) ([]RunSessionsRow, error)
 	RunningSessions(ctx context.Context) ([]RunningSessionsRow, error)
+	Runs(ctx context.Context) ([]RunsRow, error)
 	SessionByID(ctx context.Context, id uuid.UUID) (SessionByIDRow, error)
 	SessionIPs(ctx context.Context, sessionID uuid.UUID) ([]SessionIPsRow, error)
 	Sessions(ctx context.Context) ([]SessionsRow, error)
+	SessionsByRun(ctx context.Context, runID pgtype.UUID) ([]uuid.UUID, error)
 	StopSession(ctx context.Context, arg StopSessionParams) (int64, error)
 	UpdateSessionSnapshot(ctx context.Context, arg UpdateSessionSnapshotParams) error
 	UpsertReputation(ctx context.Context, arg UpsertReputationParams) error

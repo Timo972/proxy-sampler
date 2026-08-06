@@ -63,6 +63,9 @@ type SamplingSession struct {
 	ClaimedBy          *string            `json:"claimed_by"`
 	LeaseUntil         pgtype.Timestamptz `json:"lease_until"`
 	SequenceOffset     int32              `json:"sequence_offset"`
+	RunID              pgtype.UUID        `json:"run_id"`
+	VariantParams      []byte             `json:"variant_params"`
+	CellKey            *string            `json:"cell_key"`
 }
 
 type SessionIp struct {
@@ -71,4 +74,14 @@ type SessionIp struct {
 	FirstSeen pgtype.Timestamptz `json:"first_seen"`
 	LastSeen  pgtype.Timestamptz `json:"last_seen"`
 	HitCount  int64              `json:"hit_count"`
+}
+
+type VariationRun struct {
+	ID                 uuid.UUID          `json:"id"`
+	Name               string             `json:"name"`
+	TemplateCiphertext []byte             `json:"template_ciphertext"`
+	TemplateNonce      []byte             `json:"template_nonce"`
+	TemplateDisplay    string             `json:"template_display"`
+	Axes               []byte             `json:"axes"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
