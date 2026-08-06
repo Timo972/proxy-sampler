@@ -591,7 +591,7 @@ type fakeControl struct {
 	started, stopped, reenabled, deleted      []uuid.UUID
 	start                                     func(context.Context, uuid.UUID) error
 	reenable                                  func(context.Context, uuid.UUID) error
-	startCount                                int
+	startCount, stopCount, deleteCount        int
 }
 
 func (f *fakeControl) Start(ctx context.Context, id uuid.UUID) error {
@@ -604,6 +604,7 @@ func (f *fakeControl) Start(ctx context.Context, id uuid.UUID) error {
 }
 
 func (f *fakeControl) Stop(_ context.Context, id uuid.UUID) error {
+	f.stopCount++
 	f.stopped = append(f.stopped, id)
 	return f.stopErr
 }
@@ -617,6 +618,7 @@ func (f *fakeControl) Reenable(ctx context.Context, id uuid.UUID) error {
 }
 
 func (f *fakeControl) Delete(_ context.Context, id uuid.UUID) error {
+	f.deleteCount++
 	f.deleted = append(f.deleted, id)
 	return f.deleteErr
 }

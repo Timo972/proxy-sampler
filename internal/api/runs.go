@@ -186,22 +186,79 @@ func (s *Server) RunByID(ctx context.Context, request openapi.RunByIDRequestObje
 	return openapi.RunByID200JSONResponse(openapi.RunDetail{Run: mapRun(summary), Variants: variants}), nil
 }
 
-// StopRun stops every running child session in a run.
-// TODO(Task 11): implement.
-func (s *Server) StopRun(_ context.Context, _ openapi.StopRunRequestObject) (openapi.StopRunResponseObject, error) {
-	return nil, internalError()
+// StopRun stops every running child of a run. Children already stopped are
+// skipped; the refreshed run summary is returned.
+func (s *Server) StopRun(ctx context.Context, request openapi.StopRunRequestObject) (openapi.StopRunResponseObject, error) {
+	if err := s.fanOut(ctx, request.Id, s.control.Stop, session.ErrNotRunning); err != nil {
+		return nil, err
+	}
+	summary, err := s.runStore.RunByID(ctx, request.Id)
+	if err != nil {
+		return nil, internalError()
+	}
+	return openapi.StopRun200JSONResponse(mapRun(summary)), nil
 }
 
-// ReenableRun restarts every stopped or finished child session in a run.
-// TODO(Task 11): implement.
-func (s *Server) ReenableRun(_ context.Context, _ openapi.ReenableRunRequestObject) (openapi.ReenableRunResponseObject, error) {
-	return nil, internalError()
+// ReenableRun re-enables every stopped/finished child of a run.
+func (s *Server) ReenableRun(ctx context.Context, request openapi.ReenableRunRequestObject) (openapi.ReenableRunResponseObject, error) {
+	if err := s.fanOut(ctx, request.Id, s.control.Reenable, session.ErrAlreadyRunning); err != nil {
+		return nil, err
+	}
+	summary, err := s.runStore.RunByID(ctx, request.Id)
+	if err != nil {
+		return nil, internalError()
+	}
+	return openapi.ReenableRun200JSONResponse(mapRun(summary)), nil
 }
 
-// DeleteRun deletes a run and all of its child sessions.
-// TODO(Task 11): implement.
-func (s *Server) DeleteRun(_ context.Context, _ openapi.DeleteRunRequestObject) (openapi.DeleteRunResponseObject, error) {
-	return nil, internalError()
+// DeleteRun deletes every child (crossing the ClickHouse flush barrier per
+// child) and then the run row.
+func (s *Server) DeleteRun(ctx context.Context, request openapi.DeleteRunRequestObject) (openapi.DeleteRunResponseObject, error) {
+	if s.runStore == nil || s.control == nil {
+		return nil, internalError()
+	}
+	if _, err := s.runStore.RunByID(ctx, request.Id); errors.Is(err, variation.ErrRunNotFound) {
+		return nil, notFound()
+	} else if err != nil {
+		return nil, internalError()
+	}
+	variants, err := s.runStore.RunSessions(ctx, request.Id)
+	if err != nil {
+		return nil, internalError()
+	}
+	for _, v := range variants {
+		if err := s.control.Delete(ctx, v.SessionID); err != nil && !errors.Is(err, session.ErrNotFound) {
+			return nil, internalError()
+		}
+	}
+	if err := s.runStore.DeleteRun(ctx, request.Id); err != nil {
+		return nil, internalError()
+	}
+	return openapi.DeleteRun204Response{}, nil
+}
+
+// fanOut applies op to each child, treating idempotentSkip as success.
+func (s *Server) fanOut(ctx context.Context, runID uuid.UUID, op func(context.Context, uuid.UUID) error, idempotentSkip error) error {
+	if s.runStore == nil || s.control == nil {
+		return internalError()
+	}
+	if _, err := s.runStore.RunByID(ctx, runID); errors.Is(err, variation.ErrRunNotFound) {
+		return notFound()
+	} else if err != nil {
+		return internalError()
+	}
+	variants, err := s.runStore.RunSessions(ctx, runID)
+	if err != nil {
+		return internalError()
+	}
+	for _, v := range variants {
+		err := op(ctx, v.SessionID)
+		if err == nil || errors.Is(err, idempotentSkip) || errors.Is(err, session.ErrNotFound) {
+			continue
+		}
+		return internalError()
+	}
+	return nil
 }
 
 // RunReport builds the pool-composition and IP-observation report for a run.

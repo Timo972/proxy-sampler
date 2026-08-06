@@ -62,6 +62,54 @@ func TestCreateRunRejectsUnmatchedAxis(t *testing.T) {
 	}
 }
 
+func TestStopRunFansOutToChildren(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	control := &fakeControl{}
+	handler := testRunHandler(t, store, runStore, control)
+	create := request(t, handler, http.MethodPost, "/api/runs",
+		`{"name":"r","template":"p://u-{c}:pw@gate.example:1080","axes":{"c":{"kind":"list","values":["de","us"]}},"mode":"sticky","cadence_seconds":30}`)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create status = %d", create.Code)
+	}
+	runID := runStore.runs[0].ID.String()
+	resp := request(t, handler, http.MethodPost, "/api/runs/"+runID+"/stop", "")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("stop status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	if control.stopCount != 2 {
+		t.Fatalf("Stop calls = %d, want 2", control.stopCount)
+	}
+}
+
+func TestDeleteRunDeletesChildrenThenRun(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	control := &fakeControl{}
+	handler := testRunHandler(t, store, runStore, control)
+	request(t, handler, http.MethodPost, "/api/runs",
+		`{"name":"r","template":"p://u-{c}:pw@gate.example:1080","axes":{"c":{"kind":"list","values":["de"]}},"mode":"sticky","cadence_seconds":30}`)
+	runID := runStore.runs[0].ID.String()
+	resp := request(t, handler, http.MethodDelete, "/api/runs/"+runID, "")
+	if resp.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d", resp.Code)
+	}
+	if control.deleteCount != 1 {
+		t.Fatalf("Delete calls = %d, want 1", control.deleteCount)
+	}
+	if len(runStore.runs) != 0 {
+		t.Fatal("run row not deleted")
+	}
+}
+
+func TestStopRunNotFound(t *testing.T) {
+	handler := testRunHandler(t, newMemoryStore(), newMemoryRunStore(), &fakeControl{})
+	resp := request(t, handler, http.MethodPost, "/api/runs/"+uuid.NewString()+"/stop", "")
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.Code)
+	}
+}
+
 type memoryRunStore struct {
 	runs     []variation.Run
 	children map[uuid.UUID][]variation.ChildSession
