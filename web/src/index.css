@@ -117,10 +117,12 @@ p { text-wrap: pretty; }
 .home-page { width: 100%; min-width: 0; max-width: 100%; min-height: 24rem; }
 .session-sections { display: flex; min-width: 0; max-width: 100%; flex-direction: column; gap: 2.5rem; }
 .session-section { min-width: 0; max-width: 100%; }
-.section-heading { display: flex; min-width: 0; align-items: center; gap: 0.625rem; margin-bottom: 0.875rem; }
+.section-heading { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 0.625rem; margin-bottom: 0.875rem; }
 .section-heading h2 { margin: 0; font-size: 1.125rem; line-height: 1.35; letter-spacing: -0.01em; }
 .section-count { min-width: 1.5rem; border-radius: 999px; padding: 0.125rem 0.4375rem; background: var(--surface); color: var(--muted-foreground); font-size: 0.75rem; font-variant-numeric: tabular-nums; text-align: center; }
+.section-action { margin-inline-start: auto; }
 .section-empty { margin: 0; border-block: 1px solid var(--border); padding: 1rem 0; color: var(--muted-foreground); line-height: 1.5; }
+.runs-section { margin-bottom: 2.5rem; }
 .session-table-wrap { max-width: 100%; overflow-x: auto; border-block: 1px solid var(--border); }
 .table { width: 100%; min-width: 70rem; border-collapse: collapse; font-size: 0.8125rem; }
 .table th { height: 2.625rem; padding: 0 0.75rem; color: var(--muted-foreground); font-weight: 650; text-align: left; white-space: nowrap; }
@@ -324,6 +326,7 @@ p { text-wrap: pretty; }
 .ip-records { display: none; }
 
 .sample-table-wrap { max-width: 100%; overflow-x: auto; border-block: 1px solid var(--border); }
+.data-table-wrap { max-width: 100%; overflow-x: auto; border-block: 1px solid var(--border); }
 .sample-table { min-width: 92rem; }
 .sample-table .sample-group + .sample-group .sample-parent-row > * { border-top-width: 2px; }
 .sample-parent-row th { padding: 0.625rem 0.75rem; border-top: 1px solid var(--border); text-align: left; }

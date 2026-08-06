@@ -95,7 +95,10 @@ describe('HomePage', () => {
   })
 
   it('renders a newly created session when nullable sample fields are omitted', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([newlyCreated])))
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith('/api/runs')) return jsonResponse([])
+      return jsonResponse([newlyCreated])
+    }))
     renderHome()
 
     const row = await screen.findByRole('row', { name: /New no-sample session/i })
@@ -123,7 +126,8 @@ describe('HomePage', () => {
   })
 
   it('navigates from a row while stop remains a local row action', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith('/api/runs')) return jsonResponse([])
       if (init?.method === 'POST') return emptyResponse()
       return jsonResponse([running])
     })
@@ -147,7 +151,10 @@ describe('HomePage', () => {
   })
 
   it('provides a real session link for keyboard and browser navigation', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([running])))
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith('/api/runs')) return jsonResponse([])
+      return jsonResponse([running])
+    }))
     renderHome()
 
     const links = await screen.findAllByRole('link', { name: 'Frankfurt sticky' })
@@ -156,7 +163,8 @@ describe('HomePage', () => {
   })
 
   it.each(['{Enter}', ' '])('keeps Stop keyboard activation local for %s', async (key) => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith('/api/runs')) return jsonResponse([])
       if (init?.method === 'POST') return emptyResponse()
       return jsonResponse([running])
     })
@@ -176,9 +184,14 @@ describe('HomePage', () => {
   })
 
   it('keeps dependency errors inline and retries from the same surface', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(errorResponse(503, 'dependency_unavailable', 'Dependency unavailable'))
-      .mockResolvedValueOnce(jsonResponse([running]))
+    let sessionsCalls = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith('/api/runs')) return jsonResponse([])
+      sessionsCalls += 1
+      return sessionsCalls === 1
+        ? errorResponse(503, 'dependency_unavailable', 'Dependency unavailable')
+        : jsonResponse([running])
+    })
     vi.stubGlobal('fetch', fetchMock)
     renderHome()
 
@@ -186,55 +199,61 @@ describe('HomePage', () => {
     expect(alert).toHaveTextContent('Dependency unavailable')
     await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     expect((await screen.findAllByText('Frankfurt sticky')).length).toBeGreaterThan(0)
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(sessionsCalls).toBe(2)
   })
 
   it('polls every five seconds only for visible running sessions and cleans up', async () => {
     vi.useFakeTimers()
     const add = vi.spyOn(document, 'addEventListener')
     const remove = vi.spyOn(document, 'removeEventListener')
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([running]))
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith('/api/runs')) return jsonResponse([])
+      return jsonResponse([running])
+    })
     vi.stubGlobal('fetch', fetchMock)
     const { unmount } = renderHome()
 
     await settleQueries()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(sessionCallCount(fetchMock)).toBe(1)
     await act(async () => vi.advanceTimersByTime(4999))
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(sessionCallCount(fetchMock)).toBe(1)
     await act(async () => vi.advanceTimersByTime(1))
     await settleQueries()
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(sessionCallCount(fetchMock)).toBe(2)
 
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
     act(() => document.dispatchEvent(new Event('visibilitychange')))
     await act(async () => vi.advanceTimersByTime(10000))
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(sessionCallCount(fetchMock)).toBe(2)
 
     unmount()
     expect(add).toHaveBeenCalledWith('visibilitychange', expect.any(Function))
     expect(remove).toHaveBeenCalledWith('visibilitychange', expect.any(Function))
     await act(async () => vi.advanceTimersByTime(10000))
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(sessionCallCount(fetchMock)).toBe(2)
   })
 
   it('does not poll when every session is stopped', async () => {
     vi.useFakeTimers()
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([stopped]))
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith('/api/runs')) return jsonResponse([])
+      return jsonResponse([stopped])
+    })
     vi.stubGlobal('fetch', fetchMock)
     renderHome()
     await settleQueries()
     await act(async () => vi.advanceTimersByTime(15000))
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(sessionCallCount(fetchMock)).toBe(1)
   })
 })
 
-function renderHome(onNewSession = vi.fn()) {
+function renderHome(onNewSession = vi.fn(), onNewRun = vi.fn()) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   const result = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={['/']}>
         <Routes>
-          <Route path="/" element={<HomePage onNewSession={onNewSession} />} />
+          <Route path="/" element={<HomePage onNewSession={onNewSession} onNewRun={onNewRun} />} />
           <Route path="/sessions/:id" element={<p>Session destination</p>} />
         </Routes>
       </MemoryRouter>
@@ -248,6 +267,10 @@ async function settleQueries() {
     await Promise.resolve()
     await Promise.resolve()
   })
+}
+
+function sessionCallCount(mock: ReturnType<typeof vi.fn>) {
+  return mock.mock.calls.filter(([input]) => String(input).startsWith('/api/sessions')).length
 }
 
 function sessionFixture(overrides: Partial<Session> = {}): Session {
