@@ -200,6 +200,63 @@ func (r *Reader) Series(ctx context.Context, sessionID uuid.UUID, from, to time.
 	return points, nil
 }
 
+// SeriesForSessions aggregates the success/latency/composition series across a
+// set of sessions, used for variation-run pool reports.
+func (r *Reader) SeriesForSessions(ctx context.Context, sessionIDs []uuid.UUID, from, to time.Time, bucket time.Duration) ([]SeriesPoint, error) {
+	if from.After(to) {
+		return nil, ErrInvalidRange
+	}
+	if bucket <= 0 {
+		return nil, ErrInvalidBucket
+	}
+	if len(sessionIDs) == 0 {
+		return []SeriesPoint{}, nil
+	}
+	bucketSeconds := int64(bucket / time.Second)
+	if bucketSeconds == 0 {
+		bucketSeconds = 1
+	}
+	const query = `SELECT
+		toStartOfInterval(sampled_at, toIntervalSecond(?)) AS bucket,
+		if(sum(probes_attempted) = 0, 0, sum(probes_ok) / sum(probes_attempted)) AS success_rate,
+		if(countIf(probes_ok > 0) = 0, 0, quantileExactIf(0.5)(rtt_med_ms, probes_ok > 0)) AS latency_p50_ms,
+		if(countIf(probes_ok > 0) = 0, 0, quantileExactIf(0.95)(rtt_med_ms, probes_ok > 0)) AS latency_p95_ms,
+		avg(distinct_ips) AS distinct_per_sample,
+		countIf(ip_changed > 0) AS ip_changes,
+		countIf(primary_category = 'mobile') AS mobile,
+		countIf(primary_category = 'residential') AS residential,
+		countIf(primary_category = 'datacenter') AS datacenter,
+		countIf(primary_category = 'unknown') AS unknown
+	FROM sample_events
+	WHERE session_id IN (?) AND sampled_at >= ? AND sampled_at <= ?
+	GROUP BY bucket
+	ORDER BY bucket`
+	rows, err := r.conn.Query(ctx, query, bucketSeconds, sessionIDs, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("query run series: %w", err)
+	}
+	defer rows.Close()
+	points := []SeriesPoint{}
+	for rows.Next() {
+		var point SeriesPoint
+		var latencyP50MS, latencyP95MS uint32
+		if err := rows.Scan(
+			&point.At, &point.SuccessRate, &latencyP50MS, &latencyP95MS,
+			&point.DistinctPerSample, &point.IPChanges,
+			&point.Mobile, &point.Residential, &point.Datacenter, &point.Unknown,
+		); err != nil {
+			return nil, fmt.Errorf("scan run series: %w", err)
+		}
+		point.LatencyP50MS = float64(latencyP50MS)
+		point.LatencyP95MS = float64(latencyP95MS)
+		points = append(points, point)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate run series: %w", err)
+	}
+	return points, nil
+}
+
 // Stickiness derives successful primary-IP holds and rotations in Go.
 func (r *Reader) Stickiness(ctx context.Context, sessionID uuid.UUID, from, to time.Time) (Stickiness, error) {
 	if from.After(to) {
