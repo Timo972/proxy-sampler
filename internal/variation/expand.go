@@ -46,23 +46,18 @@ func Expand(t Template, axes map[string]AxisSpec, rnd RandString, maxVariants in
 	sort.Strings(fixedNames)
 	sort.Strings(randomNames)
 
-	fixedValues, err := fixedAxisValues(fixedNames, axes)
-	if err != nil {
-		return nil, err
-	}
-	for _, name := range randomNames {
-		spec := axes[name]
-		if spec.Count < 1 {
-			return nil, fmt.Errorf("random axis %q count must be >= 1", name)
-		}
-	}
-
-	total, err := variantCount(fixedValues, randomNames, axes)
+	// Check variant count and cap before materializing any axis values.
+	total, err := plannedCount(placeholders, axes)
 	if err != nil {
 		return nil, err
 	}
 	if total > maxVariants {
 		return nil, fmt.Errorf("%d variants exceed the limit of %d", total, maxVariants)
+	}
+
+	fixedValues, err := fixedAxisValues(fixedNames, axes)
+	if err != nil {
+		return nil, err
 	}
 
 	cells := cartesian(fixedNames, fixedValues)
@@ -94,6 +89,39 @@ func Expand(t Template, axes map[string]AxisSpec, rnd RandString, maxVariants in
 	return variants, nil
 }
 
+// plannedCount computes the total number of variants without materializing
+// any axis values. This allows us to validate and check the cap before
+// allocating large slices for range axes.
+func plannedCount(placeholders []string, axes map[string]AxisSpec) (int, error) {
+	total := 1
+	for _, name := range placeholders {
+		spec := axes[name]
+		switch spec.Kind {
+		case AxisList:
+			if len(spec.Values) == 0 {
+				return 0, fmt.Errorf("list axis %q has no values", name)
+			}
+			total *= len(spec.Values)
+		case AxisRange:
+			if spec.From > spec.To {
+				return 0, fmt.Errorf("range axis %q has from > to", name)
+			}
+			total *= (spec.To - spec.From + 1)
+		case AxisRandom:
+			if spec.Count < 1 {
+				return 0, fmt.Errorf("random axis %q count must be >= 1", name)
+			}
+			total *= spec.Count
+		default:
+			return 0, fmt.Errorf("axis %q has unknown kind %q", name, spec.Kind)
+		}
+	}
+	if total <= 0 {
+		return 0, fmt.Errorf("axes produce no variants")
+	}
+	return total, nil
+}
+
 func fixedAxisValues(names []string, axes map[string]AxisSpec) (map[string][]string, error) {
 	values := map[string][]string{}
 	for _, name := range names {
@@ -118,20 +146,6 @@ func fixedAxisValues(names []string, axes map[string]AxisSpec) (map[string][]str
 		}
 	}
 	return values, nil
-}
-
-func variantCount(fixed map[string][]string, randomNames []string, axes map[string]AxisSpec) (int, error) {
-	total := 1
-	for _, vals := range fixed {
-		total *= len(vals)
-	}
-	for _, name := range randomNames {
-		total *= axes[name].Count
-	}
-	if total <= 0 {
-		return 0, fmt.Errorf("axes produce no variants")
-	}
-	return total, nil
 }
 
 func cartesian(names []string, values map[string][]string) []map[string]string {
@@ -181,24 +195,10 @@ func randomCartesian(names []string, axes map[string]AxisSpec, rnd RandString) (
 	return combos, nil
 }
 
-// canonicalKey serializes a cell's params as a sorted-key JSON object.
+// canonicalKey serializes a cell's params as a JSON object with sorted keys
+// (encoding/json marshals map keys in sorted order deterministically).
 func canonicalKey(params map[string]string) (string, error) {
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	ordered := make([][2]string, 0, len(keys))
-	for _, k := range keys {
-		ordered = append(ordered, [2]string{k, params[k]})
-	}
-	// json.Marshal of a map sorts keys already, but build explicitly to stay
-	// deterministic regardless of map iteration order.
-	obj := map[string]string{}
-	for _, kv := range ordered {
-		obj[kv[0]] = kv[1]
-	}
-	raw, err := json.Marshal(obj)
+	raw, err := json.Marshal(params)
 	if err != nil {
 		return "", err
 	}
