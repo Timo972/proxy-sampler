@@ -274,6 +274,10 @@ func (r *fakeReportReader) PoolGrowth(context.Context, uuid.UUID, time.Time, tim
 	return append([]ch.GrowthPoint(nil), r.growth...), r.growthErr
 }
 
+func (r *fakeReportReader) SeriesForSessions(context.Context, []uuid.UUID, time.Time, time.Time, time.Duration) ([]ch.SeriesPoint, error) {
+	return nil, nil
+}
+
 func reportTestServer(t *testing.T, store session.Store, reader *fakeReportReader) *Server {
 	t.Helper()
 	cipher, err := cryptox.New([]byte("0123456789abcdef0123456789abcdef"))

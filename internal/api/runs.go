@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -261,16 +264,59 @@ func (s *Server) fanOut(ctx context.Context, runID uuid.UUID, op func(context.Co
 	return nil
 }
 
-// RunReport builds the pool-composition and IP-observation report for a run.
-// TODO(Task 12): implement.
-func (s *Server) RunReport(_ context.Context, _ openapi.RunReportRequestObject) (openapi.RunReportResponseObject, error) {
-	return nil, internalError()
+// ExportRunCSV streams the deduped pool IP list with reputation columns.
+func (s *Server) ExportRunCSV(ctx context.Context, request openapi.ExportRunCSVRequestObject) (openapi.ExportRunCSVResponseObject, error) {
+	if s.runStore == nil {
+		return nil, dependencyUnavailable()
+	}
+	summary, err := s.runStore.RunByID(ctx, request.Id)
+	if errors.Is(err, variation.ErrRunNotFound) {
+		return nil, notFound()
+	}
+	if err != nil {
+		return nil, dependencyUnavailable()
+	}
+	variants, err := s.runStore.RunSessions(ctx, request.Id)
+	if err != nil {
+		return nil, dependencyUnavailable()
+	}
+	observations, err := s.runStore.RunIPObservations(ctx, request.Id)
+	if err != nil {
+		return nil, dependencyUnavailable()
+	}
+	pool := variation.BuildPoolReport(variants, observations)
+
+	data := runIPCSV(pool.IPs)
+	filename := sanitizedFilename(summary.Name) + "-" + summary.ID.String() + "-pool.csv"
+	disposition := `attachment; filename="` + filename + `"`
+	return openapi.ExportRunCSV200TextcsvResponse{
+		Body:          bytes.NewReader(data),
+		Headers:       openapi.ExportRunCSV200ResponseHeaders{ContentDisposition: &disposition},
+		ContentLength: int64(len(data)),
+	}, nil
 }
 
-// ExportRunCSV streams a run's samples as CSV.
-// TODO(Task 12): implement.
-func (s *Server) ExportRunCSV(_ context.Context, _ openapi.ExportRunCSVRequestObject) (openapi.ExportRunCSVResponseObject, error) {
-	return nil, internalError()
+var runCSVHeader = []string{"ip", "category", "country", "isp", "asn", "risk_score", "greynoise_class", "dnsbl_listed", "dnsbl_hits", "hit_count"}
+
+// runIPCSV renders the deduped pool IP list as CSV bytes. The pool is bounded
+// by MAX_VARIANTS_PER_RUN x distinct IPs, small enough to buffer in memory.
+func runIPCSV(rows []variation.IPRow) []byte {
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	_ = writer.Write(runCSVHeader)
+	for _, row := range rows {
+		risk := ""
+		if row.RiskScore != nil {
+			risk = strconv.Itoa(*row.RiskScore)
+		}
+		_ = writer.Write([]string{
+			row.IP, row.Category, row.Country, row.ISP, row.ASN, risk, row.GreyNoiseClass,
+			strconv.FormatBool(row.DNSBLListed), strings.Join(row.DNSBLHits, "|"),
+			strconv.FormatInt(row.HitCount, 10),
+		})
+	}
+	writer.Flush()
+	return buf.Bytes()
 }
 
 // mapAxes converts generated OpenAPI axis specs into the variation package's

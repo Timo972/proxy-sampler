@@ -65,6 +65,7 @@ type Reader interface {
 	Series(context.Context, uuid.UUID, time.Time, time.Time, time.Duration) ([]ch.SeriesPoint, error)
 	Stickiness(context.Context, uuid.UUID, time.Time, time.Time) (ch.Stickiness, error)
 	PoolGrowth(context.Context, uuid.UUID, time.Time, time.Time) ([]ch.GrowthPoint, error)
+	SeriesForSessions(context.Context, []uuid.UUID, time.Time, time.Time, time.Duration) ([]ch.SeriesPoint, error)
 }
 
 // NewServer constructs the session and run control API.
