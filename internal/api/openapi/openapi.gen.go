@@ -24,6 +24,45 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AxisSpecKind.
+const (
+	AxisSpecKindList   AxisSpecKind = "list"
+	AxisSpecKindRandom AxisSpecKind = "random"
+	AxisSpecKindRange  AxisSpecKind = "range"
+)
+
+// Valid indicates whether the value is a known member of the AxisSpecKind enum.
+func (e AxisSpecKind) Valid() bool {
+	switch e {
+	case AxisSpecKindList:
+		return true
+	case AxisSpecKindRandom:
+		return true
+	case AxisSpecKindRange:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CreateRunRequestMode.
+const (
+	CreateRunRequestModePool   CreateRunRequestMode = "pool"
+	CreateRunRequestModeSticky CreateRunRequestMode = "sticky"
+)
+
+// Valid indicates whether the value is a known member of the CreateRunRequestMode enum.
+func (e CreateRunRequestMode) Valid() bool {
+	switch e {
+	case CreateRunRequestModePool:
+		return true
+	case CreateRunRequestModeSticky:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreateSessionRequestMode.
 const (
 	CreateSessionRequestModePool   CreateSessionRequestMode = "pool"
@@ -51,6 +90,27 @@ const (
 func (e HealthStatus) Valid() bool {
 	switch e {
 	case HealthStatusOk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunStatus.
+const (
+	RunStatusFinished RunStatus = "finished"
+	RunStatusRunning  RunStatus = "running"
+	RunStatusStopped  RunStatus = "stopped"
+)
+
+// Valid indicates whether the value is a known member of the RunStatus enum.
+func (e RunStatus) Valid() bool {
+	switch e {
+	case RunStatusFinished:
+		return true
+	case RunStatusRunning:
+		return true
+	case RunStatusStopped:
 		return true
 	default:
 		return false
@@ -95,6 +155,67 @@ func (e SessionStatus) Valid() bool {
 		return false
 	}
 }
+
+// Defines values for VariantSummaryStatus.
+const (
+	VariantSummaryStatusFinished VariantSummaryStatus = "finished"
+	VariantSummaryStatusRunning  VariantSummaryStatus = "running"
+	VariantSummaryStatusStopped  VariantSummaryStatus = "stopped"
+)
+
+// Valid indicates whether the value is a known member of the VariantSummaryStatus enum.
+func (e VariantSummaryStatus) Valid() bool {
+	switch e {
+	case VariantSummaryStatusFinished:
+		return true
+	case VariantSummaryStatusRunning:
+		return true
+	case VariantSummaryStatusStopped:
+		return true
+	default:
+		return false
+	}
+}
+
+// AxisSpec defines model for AxisSpec.
+type AxisSpec struct {
+	Count  *int         `json:"count,omitempty"`
+	From   *int         `json:"from,omitempty"`
+	Kind   AxisSpecKind `json:"kind"`
+	Length *int         `json:"length,omitempty"`
+	To     *int         `json:"to,omitempty"`
+	Values *[]string    `json:"values,omitempty"`
+}
+
+// AxisSpecKind defines model for AxisSpec.Kind.
+type AxisSpecKind string
+
+// CellReport defines model for CellReport.
+type CellReport struct {
+	CellKey      string            `json:"cell_key"`
+	Composition  PoolComposition   `json:"composition"`
+	DistinctIps  int               `json:"distinct_ips"`
+	HonorRate    *float64          `json:"honor_rate,omitempty"`
+	Params       map[string]string `json:"params"`
+	VariantCount int               `json:"variant_count"`
+}
+
+// CreateRunRequest defines model for CreateRunRequest.
+type CreateRunRequest struct {
+	Axes               map[string]AxisSpec  `json:"axes"`
+	CadenceSeconds     int                  `json:"cadence_seconds"`
+	DialTimeoutMs      *int                 `json:"dial_timeout_ms,omitempty"`
+	MaxDurationSeconds *int                 `json:"max_duration_seconds,omitempty"`
+	MaxSamples         *int                 `json:"max_samples,omitempty"`
+	Mode               CreateRunRequestMode `json:"mode"`
+	Name               string               `json:"name"`
+	ProbeTarget        *string              `json:"probe_target,omitempty"`
+	ProbesPerSample    *int                 `json:"probes_per_sample,omitempty"`
+	Template           *string              `json:"template,omitempty"`
+}
+
+// CreateRunRequestMode defines model for CreateRunRequest.Mode.
+type CreateRunRequestMode string
 
 // CreateSessionRequest defines model for CreateSessionRequest.
 type CreateSessionRequest struct {
@@ -195,6 +316,42 @@ type Rotation struct {
 	ToIp                 string    `json:"to_ip"`
 }
 
+// Run defines model for Run.
+type Run struct {
+	CreatedAt       time.Time          `json:"created_at"`
+	DistinctIps     int                `json:"distinct_ips"`
+	Id              openapi_types.UUID `json:"id"`
+	Name            string             `json:"name"`
+	Status          RunStatus          `json:"status"`
+	TemplateDisplay string             `json:"template_display"`
+	VariantCount    int                `json:"variant_count"`
+}
+
+// RunStatus defines model for Run.Status.
+type RunStatus string
+
+// RunDetail defines model for RunDetail.
+type RunDetail struct {
+	Run      Run              `json:"run"`
+	Variants []VariantSummary `json:"variants"`
+}
+
+// RunReport defines model for RunReport.
+type RunReport struct {
+	Cells              []CellReport    `json:"cells"`
+	Composition        PoolComposition `json:"composition"`
+	DistinctIps        int             `json:"distinct_ips"`
+	DnsblHitIps        int             `json:"dnsbl_hit_ips"`
+	EstimatedPoolSize  int             `json:"estimated_pool_size"`
+	FlaggedIps         int             `json:"flagged_ips"`
+	FlaggedPercent     float64         `json:"flagged_percent"`
+	HonorRate          *float64        `json:"honor_rate,omitempty"`
+	Ips                []IPRow         `json:"ips"`
+	PoolSizeLowerBound bool            `json:"pool_size_lower_bound"`
+	RiskHistogram      []RiskBucket    `json:"risk_histogram"`
+	Series             []SeriesPoint   `json:"series"`
+}
+
 // SampleEvent defines model for SampleEvent.
 type SampleEvent struct {
 	DistinctIps     int       `json:"distinct_ips"`
@@ -293,8 +450,25 @@ type Stickiness struct {
 	Rotations          []Rotation `json:"rotations"`
 }
 
+// VariantSummary defines model for VariantSummary.
+type VariantSummary struct {
+	CellKey      string               `json:"cell_key"`
+	DistinctIps  int                  `json:"distinct_ips"`
+	Name         string               `json:"name"`
+	Params       map[string]string    `json:"params"`
+	SamplesTaken int                  `json:"samples_taken"`
+	SessionId    openapi_types.UUID   `json:"session_id"`
+	Status       VariantSummaryStatus `json:"status"`
+}
+
+// VariantSummaryStatus defines model for VariantSummary.Status.
+type VariantSummaryStatus string
+
 // From defines model for From.
 type From = time.Time
+
+// RunID defines model for RunID.
+type RunID = openapi_types.UUID
 
 // SessionID defines model for SessionID.
 type SessionID = openapi_types.UUID
@@ -336,11 +510,38 @@ type SessionSamplesParams struct {
 	Page *int  `form:"page,omitempty" json:"page,omitempty"`
 }
 
+// CreateRunJSONRequestBody defines body for CreateRun for application/json ContentType.
+type CreateRunJSONRequestBody = CreateRunRequest
+
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+
+	// (GET /api/runs)
+	ListRuns(w http.ResponseWriter, r *http.Request)
+
+	// (POST /api/runs)
+	CreateRun(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /api/runs/{id})
+	DeleteRun(w http.ResponseWriter, r *http.Request, id RunID)
+
+	// (GET /api/runs/{id})
+	RunByID(w http.ResponseWriter, r *http.Request, id RunID)
+
+	// (GET /api/runs/{id}/export.csv)
+	ExportRunCSV(w http.ResponseWriter, r *http.Request, id RunID)
+
+	// (POST /api/runs/{id}/reenable)
+	ReenableRun(w http.ResponseWriter, r *http.Request, id RunID)
+
+	// (GET /api/runs/{id}/report)
+	RunReport(w http.ResponseWriter, r *http.Request, id RunID)
+
+	// (POST /api/runs/{id}/stop)
+	StopRun(w http.ResponseWriter, r *http.Request, id RunID)
 
 	// (GET /api/sessions)
 	ListSessions(w http.ResponseWriter, r *http.Request)
@@ -379,6 +580,46 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// (GET /api/runs)
+func (_ Unimplemented) ListRuns(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /api/runs)
+func (_ Unimplemented) CreateRun(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /api/runs/{id})
+func (_ Unimplemented) DeleteRun(w http.ResponseWriter, r *http.Request, id RunID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/runs/{id})
+func (_ Unimplemented) RunByID(w http.ResponseWriter, r *http.Request, id RunID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/runs/{id}/export.csv)
+func (_ Unimplemented) ExportRunCSV(w http.ResponseWriter, r *http.Request, id RunID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /api/runs/{id}/reenable)
+func (_ Unimplemented) ReenableRun(w http.ResponseWriter, r *http.Request, id RunID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /api/runs/{id}/report)
+func (_ Unimplemented) RunReport(w http.ResponseWriter, r *http.Request, id RunID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /api/runs/{id}/stop)
+func (_ Unimplemented) StopRun(w http.ResponseWriter, r *http.Request, id RunID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // (GET /api/sessions)
 func (_ Unimplemented) ListSessions(w http.ResponseWriter, r *http.Request) {
@@ -443,6 +684,190 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ListRuns operation middleware
+func (siw *ServerInterfaceWrapper) ListRuns(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRuns(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateRun operation middleware
+func (siw *ServerInterfaceWrapper) CreateRun(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateRun(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteRun operation middleware
+func (siw *ServerInterfaceWrapper) DeleteRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id RunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteRun(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RunByID operation middleware
+func (siw *ServerInterfaceWrapper) RunByID(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id RunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RunByID(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExportRunCSV operation middleware
+func (siw *ServerInterfaceWrapper) ExportRunCSV(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id RunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportRunCSV(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReenableRun operation middleware
+func (siw *ServerInterfaceWrapper) ReenableRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id RunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReenableRun(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RunReport operation middleware
+func (siw *ServerInterfaceWrapper) RunReport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id RunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RunReport(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StopRun operation middleware
+func (siw *ServerInterfaceWrapper) StopRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id RunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StopRun(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListSessions operation middleware
 func (siw *ServerInterfaceWrapper) ListSessions(w http.ResponseWriter, r *http.Request) {
@@ -896,6 +1321,30 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	}
 
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/runs", wrapper.ListRuns)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/runs", wrapper.CreateRun)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/runs/{id}", wrapper.DeleteRun)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/runs/{id}", wrapper.RunByID)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/runs/{id}/export.csv", wrapper.ExportRunCSV)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/runs/{id}/reenable", wrapper.ReenableRun)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/runs/{id}/report", wrapper.RunReport)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/runs/{id}/stop", wrapper.StopRun)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/sessions", wrapper.ListSessions)
 	})
 	r.Group(func(r chi.Router) {
@@ -941,6 +1390,583 @@ type DependencyUnavailableJSONResponse Error
 type InternalErrorJSONResponse Error
 
 type NotFoundJSONResponse Error
+
+type ListRunsRequestObject struct {
+}
+
+type ListRunsResponseObject interface {
+	VisitListRunsResponse(w http.ResponseWriter) error
+}
+
+type ListRuns200JSONResponse []Run
+
+func (response ListRuns200JSONResponse) VisitListRunsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRuns500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response ListRuns500JSONResponse) VisitListRunsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRuns503JSONResponse struct {
+	DependencyUnavailableJSONResponse
+}
+
+func (response ListRuns503JSONResponse) VisitListRunsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRunRequestObject struct {
+	Body *CreateRunJSONRequestBody
+}
+
+type CreateRunResponseObject interface {
+	VisitCreateRunResponse(w http.ResponseWriter) error
+}
+
+type CreateRun201JSONResponse Run
+
+func (response CreateRun201JSONResponse) VisitCreateRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRun400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CreateRun400JSONResponse) VisitCreateRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRun500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response CreateRun500JSONResponse) VisitCreateRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRun503JSONResponse struct {
+	DependencyUnavailableJSONResponse
+}
+
+func (response CreateRun503JSONResponse) VisitCreateRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteRunRequestObject struct {
+	Id RunID `json:"id"`
+}
+
+type DeleteRunResponseObject interface {
+	VisitDeleteRunResponse(w http.ResponseWriter) error
+}
+
+type DeleteRun204Response struct {
+}
+
+func (response DeleteRun204Response) VisitDeleteRunResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteRun400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteRun400JSONResponse) VisitDeleteRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteRun404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteRun404JSONResponse) VisitDeleteRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteRun500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response DeleteRun500JSONResponse) VisitDeleteRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteRun503JSONResponse struct {
+	DependencyUnavailableJSONResponse
+}
+
+func (response DeleteRun503JSONResponse) VisitDeleteRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunByIDRequestObject struct {
+	Id RunID `json:"id"`
+}
+
+type RunByIDResponseObject interface {
+	VisitRunByIDResponse(w http.ResponseWriter) error
+}
+
+type RunByID200JSONResponse RunDetail
+
+func (response RunByID200JSONResponse) VisitRunByIDResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunByID400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response RunByID400JSONResponse) VisitRunByIDResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunByID404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response RunByID404JSONResponse) VisitRunByIDResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunByID500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response RunByID500JSONResponse) VisitRunByIDResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunByID503JSONResponse struct {
+	DependencyUnavailableJSONResponse
+}
+
+func (response RunByID503JSONResponse) VisitRunByIDResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportRunCSVRequestObject struct {
+	Id RunID `json:"id"`
+}
+
+type ExportRunCSVResponseObject interface {
+	VisitExportRunCSVResponse(w http.ResponseWriter) error
+}
+
+type ExportRunCSV200ResponseHeaders struct {
+	ContentDisposition *string
+}
+
+type ExportRunCSV200TextcsvResponse struct {
+	Body          io.Reader
+	Headers       ExportRunCSV200ResponseHeaders
+	ContentLength int64
+}
+
+func (response ExportRunCSV200TextcsvResponse) VisitExportRunCSVResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/csv")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type ExportRunCSV404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response ExportRunCSV404JSONResponse) VisitExportRunCSVResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportRunCSV500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response ExportRunCSV500JSONResponse) VisitExportRunCSVResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportRunCSV503JSONResponse struct {
+	DependencyUnavailableJSONResponse
+}
+
+func (response ExportRunCSV503JSONResponse) VisitExportRunCSVResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReenableRunRequestObject struct {
+	Id RunID `json:"id"`
+}
+
+type ReenableRunResponseObject interface {
+	VisitReenableRunResponse(w http.ResponseWriter) error
+}
+
+type ReenableRun200JSONResponse Run
+
+func (response ReenableRun200JSONResponse) VisitReenableRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReenableRun400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response ReenableRun400JSONResponse) VisitReenableRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReenableRun404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response ReenableRun404JSONResponse) VisitReenableRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReenableRun500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response ReenableRun500JSONResponse) VisitReenableRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReenableRun503JSONResponse struct {
+	DependencyUnavailableJSONResponse
+}
+
+func (response ReenableRun503JSONResponse) VisitReenableRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunReportRequestObject struct {
+	Id RunID `json:"id"`
+}
+
+type RunReportResponseObject interface {
+	VisitRunReportResponse(w http.ResponseWriter) error
+}
+
+type RunReport200JSONResponse RunReport
+
+func (response RunReport200JSONResponse) VisitRunReportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunReport404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response RunReport404JSONResponse) VisitRunReportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunReport500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response RunReport500JSONResponse) VisitRunReportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunReport503JSONResponse struct {
+	DependencyUnavailableJSONResponse
+}
+
+func (response RunReport503JSONResponse) VisitRunReportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StopRunRequestObject struct {
+	Id RunID `json:"id"`
+}
+
+type StopRunResponseObject interface {
+	VisitStopRunResponse(w http.ResponseWriter) error
+}
+
+type StopRun200JSONResponse Run
+
+func (response StopRun200JSONResponse) VisitStopRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StopRun400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response StopRun400JSONResponse) VisitStopRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StopRun404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response StopRun404JSONResponse) VisitStopRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StopRun500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response StopRun500JSONResponse) VisitStopRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StopRun503JSONResponse struct {
+	DependencyUnavailableJSONResponse
+}
+
+func (response StopRun503JSONResponse) VisitStopRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type ListSessionsRequestObject struct {
 }
@@ -1753,6 +2779,30 @@ func (response Readyz503JSONResponse) VisitReadyzResponse(w http.ResponseWriter)
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 
+	// (GET /api/runs)
+	ListRuns(ctx context.Context, request ListRunsRequestObject) (ListRunsResponseObject, error)
+
+	// (POST /api/runs)
+	CreateRun(ctx context.Context, request CreateRunRequestObject) (CreateRunResponseObject, error)
+
+	// (DELETE /api/runs/{id})
+	DeleteRun(ctx context.Context, request DeleteRunRequestObject) (DeleteRunResponseObject, error)
+
+	// (GET /api/runs/{id})
+	RunByID(ctx context.Context, request RunByIDRequestObject) (RunByIDResponseObject, error)
+
+	// (GET /api/runs/{id}/export.csv)
+	ExportRunCSV(ctx context.Context, request ExportRunCSVRequestObject) (ExportRunCSVResponseObject, error)
+
+	// (POST /api/runs/{id}/reenable)
+	ReenableRun(ctx context.Context, request ReenableRunRequestObject) (ReenableRunResponseObject, error)
+
+	// (GET /api/runs/{id}/report)
+	RunReport(ctx context.Context, request RunReportRequestObject) (RunReportResponseObject, error)
+
+	// (POST /api/runs/{id}/stop)
+	StopRun(ctx context.Context, request StopRunRequestObject) (StopRunResponseObject, error)
+
 	// (GET /api/sessions)
 	ListSessions(ctx context.Context, request ListSessionsRequestObject) (ListSessionsResponseObject, error)
 
@@ -1814,6 +2864,217 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// ListRuns operation middleware
+func (sh *strictHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
+	var request ListRunsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListRuns(ctx, request.(ListRunsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListRuns")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListRunsResponseObject); ok {
+		if err := validResponse.VisitListRunsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateRun operation middleware
+func (sh *strictHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
+	var request CreateRunRequestObject
+
+	var body CreateRunJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateRun(ctx, request.(CreateRunRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateRun")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateRunResponseObject); ok {
+		if err := validResponse.VisitCreateRunResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteRun operation middleware
+func (sh *strictHandler) DeleteRun(w http.ResponseWriter, r *http.Request, id RunID) {
+	var request DeleteRunRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteRun(ctx, request.(DeleteRunRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteRun")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteRunResponseObject); ok {
+		if err := validResponse.VisitDeleteRunResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RunByID operation middleware
+func (sh *strictHandler) RunByID(w http.ResponseWriter, r *http.Request, id RunID) {
+	var request RunByIDRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RunByID(ctx, request.(RunByIDRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RunByID")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RunByIDResponseObject); ok {
+		if err := validResponse.VisitRunByIDResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ExportRunCSV operation middleware
+func (sh *strictHandler) ExportRunCSV(w http.ResponseWriter, r *http.Request, id RunID) {
+	var request ExportRunCSVRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ExportRunCSV(ctx, request.(ExportRunCSVRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ExportRunCSV")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ExportRunCSVResponseObject); ok {
+		if err := validResponse.VisitExportRunCSVResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReenableRun operation middleware
+func (sh *strictHandler) ReenableRun(w http.ResponseWriter, r *http.Request, id RunID) {
+	var request ReenableRunRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReenableRun(ctx, request.(ReenableRunRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReenableRun")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReenableRunResponseObject); ok {
+		if err := validResponse.VisitReenableRunResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RunReport operation middleware
+func (sh *strictHandler) RunReport(w http.ResponseWriter, r *http.Request, id RunID) {
+	var request RunReportRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RunReport(ctx, request.(RunReportRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RunReport")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RunReportResponseObject); ok {
+		if err := validResponse.VisitRunReportResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StopRun operation middleware
+func (sh *strictHandler) StopRun(w http.ResponseWriter, r *http.Request, id RunID) {
+	var request StopRunRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StopRun(ctx, request.(StopRunRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StopRun")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StopRunResponseObject); ok {
+		if err := validResponse.VisitStopRunResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // ListSessions operation middleware
@@ -2109,46 +3370,55 @@ func (sh *strictHandler) Readyz(w http.ResponseWriter, r *http.Request) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"dMQZjP1xmP33vwAAAP//",
+	"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",
+	"zzua//4OAAD//w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
