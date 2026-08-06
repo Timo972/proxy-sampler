@@ -1,0 +1,81 @@
+package variation
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/netip"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/timo972/proxy-sampler/internal/session"
+)
+
+// ErrRunNotFound is returned when a run row does not exist.
+var ErrRunNotFound = errors.New("variation run not found")
+
+// RunStatus is a run's status, derived from its children.
+type RunStatus string
+
+const (
+	RunRunning  RunStatus = "running"
+	RunStopped  RunStatus = "stopped"
+	RunFinished RunStatus = "finished"
+)
+
+// Run is a durable variation run owning many child sessions.
+type Run struct {
+	ID                 uuid.UUID
+	Name               string
+	TemplateCiphertext []byte
+	TemplateNonce      []byte
+	TemplateDisplay    string
+	Axes               json.RawMessage
+	CreatedAt          time.Time
+}
+
+// ChildSession pairs a session with its resolved variant params for insertion.
+type ChildSession struct {
+	Session session.Session
+	Params  json.RawMessage
+	CellKey string
+}
+
+// RunSummary is a run plus its rolled-up counts and derived status.
+type RunSummary struct {
+	Run
+	VariantCount int
+	DistinctIPs  int
+	Status       RunStatus
+}
+
+// VariantSession is one child session's summary within a run.
+type VariantSession struct {
+	SessionID uuid.UUID
+	Name      string
+	Params    json.RawMessage
+	CellKey   string
+	Status    session.Status
+	Snapshot  session.Snapshot
+}
+
+// IPObservation is one child session observing one exit IP, with reputation.
+type IPObservation struct {
+	SessionID  uuid.UUID
+	IP         netip.Addr
+	HitCount   int64
+	FirstSeen  time.Time
+	LastSeen   time.Time
+	Reputation *session.Reputation
+}
+
+// Store persists and reads variation runs and their aggregates.
+type Store interface {
+	CreateRun(ctx context.Context, run Run, children []ChildSession) error
+	Runs(ctx context.Context) ([]RunSummary, error)
+	RunByID(ctx context.Context, id uuid.UUID) (RunSummary, error)
+	RunSessions(ctx context.Context, id uuid.UUID) ([]VariantSession, error)
+	RunIPObservations(ctx context.Context, id uuid.UUID) ([]IPObservation, error)
+	DeleteRun(ctx context.Context, id uuid.UUID) error
+}
