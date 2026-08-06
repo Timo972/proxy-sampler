@@ -1331,14 +1331,6 @@ func addRisk(buckets []RiskBucket, score int) {
 }
 ```
 
-Add a tiny local `itoa` helper at the bottom of `report.go` (avoids importing strconv only for labels — or just import strconv and use `strconv.Itoa`; prefer strconv for clarity):
-
-```go
-import "strconv"
-// ...replace itoa(x) usages with strconv.Itoa(x) and delete labelFor's helper.
-```
-
-
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `go test ./internal/variation/ -v`
