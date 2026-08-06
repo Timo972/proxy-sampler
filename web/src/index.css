@@ -179,6 +179,10 @@ p { text-wrap: pretty; }
 .field-hint { color: var(--muted-foreground); }
 .field-error { color: oklch(0.42 0.15 28); }
 .form-alert { margin-bottom: 1rem; }
+.axes-builder { display: flex; flex-direction: column; gap: 0.75rem; }
+.axes-builder-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.axis-row { display: flex; flex-direction: column; gap: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.875rem; background: var(--surface); }
+.axis-row-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .advanced-settings { margin-top: 0.125rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
 .advanced-trigger { width: 100%; justify-content: space-between; padding-inline: 0.25rem; }
 .advanced-trigger .rotate { transform: rotate(180deg); }
@@ -213,7 +217,7 @@ p { text-wrap: pretty; }
   .session-record > .button { width: 100%; }
   .empty-state { margin-top: 2.5rem; text-align: left; }
   .empty-state p { margin-inline: 0; }
-  .form-grid { grid-template-columns: 1fr; }
+  .form-grid, .axis-row-fields { grid-template-columns: 1fr; }
   .dialog-content { width: calc(100% - 16px); max-height: calc(100vh - 16px); padding: 1.25rem 1rem; }
   .dialog-actions { position: sticky; bottom: -1.25rem; margin-inline: -1rem; padding: 0.875rem 1rem 1.25rem; background: var(--background); }
   .dialog-actions .button { flex: 1; }
