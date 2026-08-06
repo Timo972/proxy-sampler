@@ -1,17 +1,21 @@
-FROM node:24-bookworm-slim AS web-builder
+# Builder stages run on the build host's native architecture; only the Go
+# compile targets TARGETOS/TARGETARCH, so multi-platform builds need no
+# emulation for the expensive npm/go steps.
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS web-builder
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.26 AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.26 AS go-builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web-builder /src/web/dist ./web/dist
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/proxy-sampler ./cmd/app
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/proxy-sampler ./cmd/app
 
 FROM debian:bookworm-slim
 RUN apt-get update \
