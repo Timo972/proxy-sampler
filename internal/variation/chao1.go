@@ -3,8 +3,8 @@ package variation
 // Estimate is a Chao1 pool-size estimate. LowerBound marks the fallback where
 // the estimator is undefined (no doubletons) and Estimate equals Observed.
 type Estimate struct {
-	Observed  int
-	Estimate  int
+	Observed   int
+	Estimate   int
 	LowerBound bool
 }
 

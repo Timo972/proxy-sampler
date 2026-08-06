@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	cryptox "github.com/timo972/proxy-sampler/internal/crypto"
 	"github.com/timo972/proxy-sampler/internal/session"
-	"github.com/google/uuid"
 )
 
 const (
