@@ -42,7 +42,7 @@ type postgresResource struct {
 }
 
 type coreResource struct {
-	store  session.Store
+	store  *db.Store
 	cipher *cryptox.Cipher
 	lookup sampler.ReputationLookup
 }
@@ -294,7 +294,7 @@ func productionDependencies(logger *slog.Logger) dependencies {
 			server := api.NewServer(core.store, supervisor, core.cipher, api.Defaults{
 				ProbeTarget: cfg.ProbeTargetDefault,
 				DialTimeout: 10 * time.Second,
-			}, reader.reader)
+			}, core.store, cfg.MaxVariantsPerRun, reader.reader)
 			handler, err := api.NewRouter(server.Handler(), webassets.FS, logger)
 			if err != nil {
 				return application{}, err
