@@ -296,3 +296,152 @@ function useDocumentVisible() {
   }, [])
   return visible
 }
+
+export type AxisKind = 'list' | 'range' | 'random'
+
+export interface AxisSpec {
+  kind: AxisKind
+  values?: string[]
+  from?: number
+  to?: number
+  count?: number
+  length?: number
+}
+
+export interface Run {
+  id: string
+  name: string
+  template_display: string
+  status: SessionStatus
+  variant_count: number
+  distinct_ips: number
+  created_at: string
+}
+
+export interface VariantSummary {
+  session_id: string
+  name: string
+  cell_key: string
+  params: Record<string, string>
+  status: SessionStatus
+  samples_taken: number
+  distinct_ips: number
+}
+
+export interface RunDetail {
+  run: Run
+  variants: VariantSummary[]
+}
+
+export interface CreateRunRequest {
+  name: string
+  template: string
+  axes: Record<string, AxisSpec>
+  mode: SessionMode
+  cadence_seconds: number
+  probes_per_sample?: number
+  probe_target?: string
+  dial_timeout_ms?: number
+  max_samples?: number | null
+  max_duration_seconds?: number | null
+}
+
+export interface CellReport {
+  cell_key: string
+  params: Record<string, string>
+  variant_count: number
+  distinct_ips: number
+  honor_rate?: number | null
+  composition: PoolComposition
+}
+
+export interface RunReport {
+  distinct_ips: number
+  estimated_pool_size: number
+  pool_size_lower_bound: boolean
+  honor_rate?: number | null
+  composition: PoolComposition
+  risk_histogram: RiskBucket[]
+  flagged_ips: number
+  flagged_percent: number
+  dnsbl_hit_ips: number
+  series: SeriesPoint[]
+  cells: CellReport[]
+  ips: IPRow[]
+}
+
+export function useRuns() {
+  const visible = useDocumentVisible()
+  return useQuery({
+    queryKey: ['runs'],
+    queryFn: () => api<Run[]>('/api/runs'),
+    refetchInterval: (query) => visible && query.state.data?.some((run) => run.status === 'running') ? 5000 : false,
+    refetchIntervalInBackground: false,
+  })
+}
+
+export function useRun(id: string) {
+  const visible = useDocumentVisible()
+  return useQuery({
+    queryKey: ['runs', id],
+    queryFn: () => api<RunDetail>(`/api/runs/${id}`),
+    refetchInterval: (query) => visible && query.state.data?.run.status === 'running' ? 5000 : false,
+    refetchIntervalInBackground: false,
+    enabled: Boolean(id),
+  })
+}
+
+export function useRunReport(id: string, running: boolean) {
+  const visible = useDocumentVisible()
+  return useQuery({
+    queryKey: ['run-report', id],
+    queryFn: () => api<RunReport>(`/api/runs/${id}/report`),
+    refetchInterval: visible && running ? 5000 : false,
+    refetchIntervalInBackground: false,
+    enabled: Boolean(id),
+  })
+}
+
+export function useCreateRun() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: CreateRunRequest) => api<Run>('/api/runs', { method: 'POST', body: JSON.stringify(request) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['runs'] }),
+  })
+}
+
+export function useStopRun() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api<Run>(`/api/runs/${id}/stop`, { method: 'POST' }),
+    onSuccess: async (_data, id) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['runs'] }),
+        queryClient.invalidateQueries({ queryKey: ['runs', id] }),
+        queryClient.invalidateQueries({ queryKey: ['run-report', id] }),
+      ])
+    },
+  })
+}
+
+export function useReenableRun() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api<Run>(`/api/runs/${id}/reenable`, { method: 'POST' }),
+    onSuccess: async (_data, id) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['runs'] }),
+        queryClient.invalidateQueries({ queryKey: ['runs', id] }),
+        queryClient.invalidateQueries({ queryKey: ['run-report', id] }),
+      ])
+    },
+  })
+}
+
+export function useDeleteRun() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api<void>(`/api/runs/${id}`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['runs'] }),
+  })
+}
