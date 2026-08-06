@@ -101,3 +101,48 @@ func TestLoadRejectsInvalidOverrides(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadDefaultsMaxVariantsPerRun(t *testing.T) {
+	cfg, err := Load(envFunc(map[string]string{
+		"DATABASE_URL":   "postgres://x",
+		"CLICKHOUSE_DSN": "clickhouse://x",
+		"ENCRYPTION_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxVariantsPerRun != 128 {
+		t.Fatalf("MaxVariantsPerRun = %d, want 128", cfg.MaxVariantsPerRun)
+	}
+}
+
+func TestLoadOverridesMaxVariantsPerRun(t *testing.T) {
+	cfg, err := Load(envFunc(map[string]string{
+		"DATABASE_URL":         "postgres://x",
+		"CLICKHOUSE_DSN":       "clickhouse://x",
+		"ENCRYPTION_KEY":       base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"MAX_VARIANTS_PER_RUN": "20",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxVariantsPerRun != 20 {
+		t.Fatalf("MaxVariantsPerRun = %d, want 20", cfg.MaxVariantsPerRun)
+	}
+}
+
+func TestLoadRejectsNonPositiveMaxVariantsPerRun(t *testing.T) {
+	_, err := Load(envFunc(map[string]string{
+		"DATABASE_URL":         "postgres://x",
+		"CLICKHOUSE_DSN":       "clickhouse://x",
+		"ENCRYPTION_KEY":       base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"MAX_VARIANTS_PER_RUN": "0",
+	}))
+	if err == nil {
+		t.Fatal("expected error for non-positive MAX_VARIANTS_PER_RUN")
+	}
+}
+
+func envFunc(values map[string]string) func(string) string {
+	return func(key string) string { return values[key] }
+}
