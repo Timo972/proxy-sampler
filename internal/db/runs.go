@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -80,7 +81,7 @@ func (s *Store) Runs(ctx context.Context) ([]variation.RunSummary, error) {
 
 func (s *Store) RunByID(ctx context.Context, id uuid.UUID) (variation.RunSummary, error) {
 	row, err := s.q.RunByID(ctx, id)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return variation.RunSummary{}, variation.ErrRunNotFound
 	}
 	if err != nil {

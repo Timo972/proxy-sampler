@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +52,44 @@ func TestCreateRunRejectsCapExceeded(t *testing.T) {
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.Code)
 	}
+}
+
+func TestCreateRunEnforcesRequestBodyLimit(t *testing.T) {
+	const bodyLimit = 1 << 20
+	prefix := `{"name":"Boundary","template":"socks5://proxy.example:1080/`
+	suffix := `","mode":"sticky","cadence_seconds":10,"axes":{}}`
+	bodyAtLimit := prefix + strings.Repeat("a", bodyLimit-len(prefix)-len(suffix)) + suffix
+	if len(bodyAtLimit) != bodyLimit {
+		t.Fatalf("boundary body length = %d, want %d", len(bodyAtLimit), bodyLimit)
+	}
+
+	t.Run("exact limit accepted and replayed", func(t *testing.T) {
+		store := newMemoryStore()
+		runStore := newMemoryRunStore()
+		control := &fakeControl{}
+		handler := testRunHandler(t, store, runStore, control)
+		response := request(t, handler, http.MethodPost, "/api/runs", bodyAtLimit)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201; body=%s", response.Code, response.Body.String())
+		}
+		if len(runStore.runs) != 1 || control.startCount != 1 {
+			t.Fatalf("created/started = %d/%d, want 1/1", len(runStore.runs), control.startCount)
+		}
+	})
+
+	t.Run("limit plus one rejected before variant expansion", func(t *testing.T) {
+		store := newMemoryStore()
+		runStore := newMemoryRunStore()
+		control := &fakeControl{}
+		handler := testRunHandler(t, store, runStore, control)
+		response := request(t, handler, http.MethodPost, "/api/runs", bodyAtLimit+" ")
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body=%s", response.Code, response.Body.String())
+		}
+		if len(runStore.runs) != 0 || control.startCount != 0 {
+			t.Fatalf("created/started = %d/%d, want 0/0", len(runStore.runs), control.startCount)
+		}
+	})
 }
 
 func TestCreateRunRejectsUnmatchedAxis(t *testing.T) {

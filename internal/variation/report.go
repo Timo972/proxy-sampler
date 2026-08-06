@@ -53,8 +53,6 @@ type CellReport struct {
 	DistinctIPs  int
 	HonorRate    *float64
 	Composition  Composition
-	MedianRisk   *int
-	SuccessRate  float64
 }
 
 // PoolReport is the aggregated, IP-deduped view over a whole run.

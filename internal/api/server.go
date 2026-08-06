@@ -107,25 +107,44 @@ func (s *Server) Handler() http.Handler {
 	})
 }
 
+// validateCreateSessionRequest caps the body size of POST /api/sessions and
+// POST /api/runs, and additionally validates the field allowlist for
+// /api/sessions (runs have a different, axes-based body shape that is
+// validated downstream in the run-expansion path instead).
 func validateCreateSessionRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateSessionBodyBytes))
-		if err != nil {
-			requestErrorHandler(w, r, err)
-			return
-		}
-		r.Body = io.NopCloser(bytes.NewReader(raw))
-		r.ContentLength = int64(len(raw))
-		if err := validateCreateSessionJSON(raw); err != nil {
-			requestErrorHandler(w, r, err)
-			return
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions":
+			raw, ok := readCappedBody(w, r)
+			if !ok {
+				return
+			}
+			if err := validateCreateSessionJSON(raw); err != nil {
+				requestErrorHandler(w, r, err)
+				return
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/runs":
+			if _, ok := readCappedBody(w, r); !ok {
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// readCappedBody reads r.Body through a maxCreateSessionBodyBytes-limited
+// reader and resets r.Body/r.ContentLength so downstream handlers can read it
+// again. On error it writes the request-error response and returns ok=false;
+// callers must stop processing the request in that case.
+func readCappedBody(w http.ResponseWriter, r *http.Request) (raw []byte, ok bool) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateSessionBodyBytes))
+	if err != nil {
+		requestErrorHandler(w, r, err)
+		return nil, false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	r.ContentLength = int64(len(raw))
+	return raw, true
 }
 
 func validateCreateSessionJSON(raw []byte) error {

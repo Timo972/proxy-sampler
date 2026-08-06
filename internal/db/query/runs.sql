@@ -29,7 +29,9 @@ SELECT
   run.id, run.name, run.template_ciphertext, run.template_nonce, run.template_display,
   run.axes, run.created_at,
   COUNT(s.id) AS variant_count,
-  COALESCE(SUM(s.distinct_ips), 0)::bigint AS distinct_ips,
+  (SELECT COUNT(DISTINCT si.ip) FROM session_ips AS si
+     JOIN sampling_sessions AS c ON c.id = si.session_id
+     WHERE c.run_id = run.id)::bigint AS distinct_ips,
   COUNT(*) FILTER (WHERE s.status = 'running') AS running_count,
   COUNT(*) FILTER (WHERE s.status = 'finished') AS finished_count
 FROM variation_runs AS run
@@ -42,7 +44,9 @@ SELECT
   run.id, run.name, run.template_ciphertext, run.template_nonce, run.template_display,
   run.axes, run.created_at,
   COUNT(s.id) AS variant_count,
-  COALESCE(SUM(s.distinct_ips), 0)::bigint AS distinct_ips,
+  (SELECT COUNT(DISTINCT si.ip) FROM session_ips AS si
+     JOIN sampling_sessions AS c ON c.id = si.session_id
+     WHERE c.run_id = run.id)::bigint AS distinct_ips,
   COUNT(*) FILTER (WHERE s.status = 'running') AS running_count,
   COUNT(*) FILTER (WHERE s.status = 'finished') AS finished_count
 FROM variation_runs AS run
