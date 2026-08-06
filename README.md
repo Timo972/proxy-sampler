@@ -147,3 +147,7 @@ docker run --rm -p 8080:8080 \
   -e ENCRYPTION_KEY \
   proxy-sampler:local
 ```
+
+## License
+
+Copyright (c) 2026 Timo Beckmann. Released under the [MIT License](LICENSE).
