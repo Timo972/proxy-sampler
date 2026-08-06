@@ -21,6 +21,7 @@ import (
 	cryptox "github.com/timo972/proxy-sampler/internal/crypto"
 	"github.com/timo972/proxy-sampler/internal/proxydial"
 	"github.com/timo972/proxy-sampler/internal/session"
+	"github.com/timo972/proxy-sampler/internal/variation"
 )
 
 const (
@@ -46,12 +47,14 @@ type Defaults struct {
 
 // Server implements the generated strict server interface.
 type Server struct {
-	store    session.Store
-	control  Control
-	cipher   *cryptox.Cipher
-	reader   Reader
-	defaults Defaults
-	now      func() time.Time
+	store       session.Store
+	control     Control
+	cipher      *cryptox.Cipher
+	reader      Reader
+	defaults    Defaults
+	now         func() time.Time
+	runStore    variation.Store
+	maxVariants int
 }
 
 // Reader supplies ClickHouse-backed report, sample, export, and readiness data.
@@ -64,20 +67,26 @@ type Reader interface {
 	PoolGrowth(context.Context, uuid.UUID, time.Time, time.Time) ([]ch.GrowthPoint, error)
 }
 
-// NewServer constructs the session control API.
+// NewServer constructs the session and run control API.
 // The optional reader preserves compatibility for control-only construction.
-func NewServer(store session.Store, control Control, cipher *cryptox.Cipher, defaults Defaults, readers ...Reader) *Server {
+func NewServer(store session.Store, control Control, cipher *cryptox.Cipher, defaults Defaults, runStore variation.Store, maxVariants int, readers ...Reader) *Server {
 	if defaults.ProbeTarget == "" {
 		defaults.ProbeTarget = defaultProbeTarget
 	}
 	if defaults.DialTimeout == 0 {
 		defaults.DialTimeout = defaultDialTimeout
 	}
+	if maxVariants <= 0 {
+		maxVariants = 128
+	}
 	var reader Reader
 	if len(readers) > 0 {
 		reader = readers[0]
 	}
-	return &Server{store: store, control: control, cipher: cipher, reader: reader, defaults: defaults, now: time.Now}
+	return &Server{
+		store: store, control: control, cipher: cipher, reader: reader, defaults: defaults, now: time.Now,
+		runStore: runStore, maxVariants: maxVariants,
+	}
 }
 
 // Handler registers generated paths directly on a root chi router.

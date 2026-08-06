@@ -280,5 +280,5 @@ func reportTestServer(t *testing.T, store session.Store, reader *fakeReportReade
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewServer(store, &fakeControl{}, cipher, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}, reader)
+	return NewServer(store, &fakeControl{}, cipher, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}, nil, 128, reader)
 }

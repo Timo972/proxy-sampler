@@ -22,7 +22,7 @@ import (
 )
 
 func TestSPAHandlerServesIndexAssetsAndDeepLinks(t *testing.T) {
-	handler := testRouter(t, testAssets(), NewServer(nil, nil, nil, Defaults{}).Handler(), discardRouterLogger())
+	handler := testRouter(t, testAssets(), NewServer(nil, nil, nil, Defaults{}, nil, 128).Handler(), discardRouterLogger())
 
 	tests := []struct {
 		name         string
@@ -62,7 +62,7 @@ func TestSPAHandlerServesIndexAssetsAndDeepLinks(t *testing.T) {
 }
 
 func TestSPAHandlerRejectsTraversalInsteadOfFallingBack(t *testing.T) {
-	handler := testRouter(t, testAssets(), NewServer(nil, nil, nil, Defaults{}).Handler(), discardRouterLogger())
+	handler := testRouter(t, testAssets(), NewServer(nil, nil, nil, Defaults{}, nil, 128).Handler(), discardRouterLogger())
 	for _, target := range []string{
 		"http://example.com/../go.mod",
 		"http://example.com/%2e%2e/go.mod",
@@ -84,7 +84,7 @@ func TestSPAHandlerRejectsTraversalInsteadOfFallingBack(t *testing.T) {
 }
 
 func TestRouterKeepsUnknownAPIRoutesJSON(t *testing.T) {
-	handler := testRouter(t, testAssets(), NewServer(nil, nil, nil, Defaults{}).Handler(), discardRouterLogger())
+	handler := testRouter(t, testAssets(), NewServer(nil, nil, nil, Defaults{}, nil, 128).Handler(), discardRouterLogger())
 	response := serveRouterRequest(handler, "/api/not-a-route")
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body = %q", response.Code, response.Body.String())
@@ -152,7 +152,7 @@ func TestRouterRecoversPanicsAndLogsServerError(t *testing.T) {
 }
 
 func TestCommittedDistAssetsAreServedWithImmutableCaching(t *testing.T) {
-	handler := testRouter(t, webassets.FS, NewServer(nil, nil, nil, Defaults{}).Handler(), discardRouterLogger())
+	handler := testRouter(t, webassets.FS, NewServer(nil, nil, nil, Defaults{}, nil, 128).Handler(), discardRouterLogger())
 	entries, err := fs.ReadDir(webassets.FS, "dist/assets")
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestRouterUsesFinalOTelHTTPWrapper(t *testing.T) {
 		otel.SetTracerProvider(original)
 	})
 
-	handler := testRouter(t, testAssets(), NewServer(nil, nil, nil, Defaults{}).Handler(), discardRouterLogger())
+	handler := testRouter(t, testAssets(), NewServer(nil, nil, nil, Defaults{}, nil, 128).Handler(), discardRouterLogger())
 	response := serveRouterRequest(handler, "/")
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d", response.Code)

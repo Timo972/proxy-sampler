@@ -105,7 +105,7 @@ func TestCreateSessionUsesExplicitTargetTimeoutAndCaps(t *testing.T) {
 
 func TestCreateSessionRejectsMalformedProxyBeforeEncryption(t *testing.T) {
 	store := newMemoryStore()
-	server := NewServer(store, &fakeControl{}, nil, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second})
+	server := NewServer(store, &fakeControl{}, nil, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}, nil, 128)
 
 	response := request(t, server.Handler(), http.MethodPost, "/api/sessions", `{"name":"Invalid","proxy":"not a proxy URL","mode":"sticky","cadence_seconds":10}`)
 	assertAPIError(t, response, http.StatusBadRequest, "invalid_request")
@@ -175,7 +175,7 @@ func TestCreateSessionEnforcesRequestBodyLimit(t *testing.T) {
 	t.Run("limit plus one rejected before encryption", func(t *testing.T) {
 		store := newMemoryStore()
 		control := &fakeControl{}
-		server := NewServer(store, control, nil, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second})
+		server := NewServer(store, control, nil, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}, nil, 128)
 		response := request(t, server.Handler(), http.MethodPost, "/api/sessions", bodyAtLimit+" ")
 		assertAPIError(t, response, http.StatusBadRequest, "invalid_request")
 		if len(store.sessions) != 0 || len(control.started) != 0 {
@@ -505,7 +505,7 @@ func testHandler(t *testing.T, store session.Store, control Control) http.Handle
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewServer(store, control, cipher, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}).Handler()
+	return NewServer(store, control, cipher, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}, nil, 128).Handler()
 }
 
 func request(t *testing.T, handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -591,9 +591,11 @@ type fakeControl struct {
 	started, stopped, reenabled, deleted      []uuid.UUID
 	start                                     func(context.Context, uuid.UUID) error
 	reenable                                  func(context.Context, uuid.UUID) error
+	startCount                                int
 }
 
 func (f *fakeControl) Start(ctx context.Context, id uuid.UUID) error {
+	f.startCount++
 	f.started = append(f.started, id)
 	if f.start != nil {
 		return f.start(ctx, id)
