@@ -124,7 +124,12 @@ func validateCreateSessionRequest(next http.Handler) http.Handler {
 				return
 			}
 		case r.Method == http.MethodPost && r.URL.Path == "/api/runs":
-			if _, ok := readCappedBody(w, r); !ok {
+			raw, ok := readCappedBody(w, r)
+			if !ok {
+				return
+			}
+			if err := validateCreateRunJSON(raw); err != nil {
+				requestErrorHandler(w, r, err)
 				return
 			}
 		}
@@ -165,6 +170,65 @@ func validateCreateSessionJSON(raw []byte) error {
 			}
 		default:
 			return invalidRequest()
+		}
+	}
+	return nil
+}
+
+// validateCreateRunJSON enforces the same strict shape for POST /api/runs that
+// validateCreateSessionJSON enforces for sessions: an exact field allowlist, no
+// trailing data, no null on non-nullable optional fields, and per-axis key
+// allowlisting. Without it the generated decoder silently drops typo'd fields
+// (e.g. max_sample) and nested axis typos, despite additionalProperties:false.
+func validateCreateRunJSON(raw []byte) error {
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := decoder.Decode(&fields); err != nil || fields == nil {
+		return invalidRequest()
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return invalidRequest()
+	}
+	for name, value := range fields {
+		switch name {
+		case "name", "template", "mode", "cadence_seconds", "max_samples", "max_duration_seconds":
+		case "probes_per_sample", "probe_target", "dial_timeout_ms":
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return invalidRequest()
+			}
+		case "axes":
+			if err := validateAxesJSON(value); err != nil {
+				return err
+			}
+		default:
+			return invalidRequest()
+		}
+	}
+	return nil
+}
+
+// validateAxesJSON rejects a null axes object and any axis carrying a key
+// outside the AxisSpec allowlist, so a typo like "value" (for "values") fails
+// loudly instead of being silently ignored.
+func validateAxesJSON(raw json.RawMessage) error {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return invalidRequest()
+	}
+	var axes map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &axes); err != nil {
+		return invalidRequest()
+	}
+	for _, spec := range axes {
+		var axisFields map[string]json.RawMessage
+		if err := json.Unmarshal(spec, &axisFields); err != nil {
+			return invalidRequest()
+		}
+		for key := range axisFields {
+			switch key {
+			case "kind", "values", "from", "to", "count", "length":
+			default:
+				return invalidRequest()
+			}
 		}
 	}
 	return nil

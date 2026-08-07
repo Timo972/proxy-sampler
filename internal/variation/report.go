@@ -83,7 +83,7 @@ func BuildPoolReport(variants []VariantSession, observations []IPObservation) Po
 		sessionObs[obs.SessionID] = append(sessionObs[obs.SessionID], obs)
 		accum, ok := ips[obs.IP]
 		if !ok {
-			accum = &ipAccum{row: newIPRow(obs), variants: map[uuid.UUID]struct{}{}}
+			accum = &ipAccum{row: newIPRow(obs), variants: map[uuid.UUID]struct{}{}, flagged: reputationFlagged(obs.Reputation)}
 			ips[obs.IP] = accum
 		} else {
 			accum.row.HitCount += obs.HitCount
@@ -101,7 +101,7 @@ func BuildPoolReport(variants []VariantSession, observations []IPObservation) Po
 	for _, accum := range sortedIPs(ips) {
 		frequencies = append(frequencies, len(accum.variants))
 		applyComposition(&report.Composition, accum.row.Category)
-		if flagged := isFlagged(accum.row); flagged {
+		if accum.flagged {
 			report.FlaggedIPs++
 		}
 		if accum.row.DNSBLListed {
@@ -145,10 +145,22 @@ func newIPRow(obs IPObservation) IPRow {
 	return row
 }
 
-func isFlagged(row IPRow) bool {
-	return (row.RiskScore != nil && *row.RiskScore >= 70) ||
-		strings.EqualFold(row.GreyNoiseClass, "malicious") || row.DNSBLListed
+// reputationFlagged mirrors the session report's flagged predicate so per-IP
+// flagged counts are consistent between session and run reports. It uses the
+// full reputation (ProxyCheck and StopForumSpam included), not the reduced
+// IPRow, which drops those signals.
+func reputationFlagged(r *session.Reputation) bool {
+	if r == nil {
+		return false
+	}
+	return boolValue(r.ProxyCheckProxy) ||
+		(r.RiskScore != nil && *r.RiskScore >= 70) ||
+		strings.EqualFold(r.GreyNoiseClass, "malicious") ||
+		boolValue(r.SFSAppears) ||
+		boolValue(r.DNSBLListed)
 }
+
+func boolValue(value *bool) bool { return value != nil && *value }
 
 func buildHonorAndCells(variants []VariantSession, sessionObs map[uuid.UUID][]IPObservation) (*float64, []CellReport) {
 	type cellAccum struct {
@@ -167,7 +179,11 @@ func buildHonorAndCells(variants []VariantSession, sessionObs map[uuid.UUID][]IP
 	for _, v := range variants {
 		accum, ok := cells[v.CellKey]
 		if !ok {
-			accum = &cellAccum{key: v.CellKey, params: v.Params, ips: map[netip.Addr]struct{}{}}
+			// The cell key is the canonical JSON of the fixed (non-random) axis
+			// params, so it is the correct params view for the cell. Using the
+			// first variant's full params would leak that variant's random
+			// values (e.g. a session id) and disagree with cell_key.
+			accum = &cellAccum{key: v.CellKey, params: json.RawMessage(v.CellKey), ips: map[netip.Addr]struct{}{}}
 			cells[v.CellKey] = accum
 			order = append(order, v.CellKey)
 		}
@@ -179,7 +195,12 @@ func buildHonorAndCells(variants []VariantSession, sessionObs map[uuid.UUID][]IP
 				applyComposition(&accum.composition, normalizedCategory(reputationCategory(o.Reputation)))
 			}
 		}
-		if v.Snapshot.SamplesTaken == 0 || len(obs) == 0 {
+		// Base the honor denominator on observation presence, not the per-run
+		// samples counter: re-enabling a session resets SamplesTaken to zero
+		// while deliberately preserving its session_ips, so keying on the
+		// counter would drop already-observed variants right after a re-enable
+		// even though their IPs still populate the pool report.
+		if len(obs) == 0 {
 			continue
 		}
 		accum.sampled++
@@ -240,7 +261,11 @@ func dominant(obs []IPObservation, pick func(*session.Reputation) string) string
 		if value == "" {
 			continue
 		}
-		weights[value] += o.HitCount + 1
+		// Weight by the actual observation count. An observed IP always has at
+		// least one hit; clamp to 1 defensively so a zero-hit row still votes
+		// once rather than giving every distinct IP a fixed bonus (which would
+		// bias dominance toward IP count instead of traffic).
+		weights[value] += max(o.HitCount, 1)
 	}
 	best, bestWeight := "", int64(0)
 	for value, weight := range weights {
@@ -271,6 +296,7 @@ func reputationCategory(r *session.Reputation) string {
 type ipAccum struct {
 	row      IPRow
 	variants map[uuid.UUID]struct{}
+	flagged  bool
 }
 
 // sortedIPs returns the accumulators in deterministic IP order.
@@ -300,7 +326,12 @@ func applyComposition(c *Composition, category string) {
 	}
 }
 
-func normalizedCategory(value string) string {
+func normalizedCategory(value string) string { return NormalizeCategory(value) }
+
+// NormalizeCategory collapses a reputation category to one of the pool report's
+// canonical buckets. Exported so streaming readers (e.g. the pool CSV export)
+// emit the same category values as BuildPoolReport.
+func NormalizeCategory(value string) string {
 	switch value {
 	case "mobile", "residential", "datacenter":
 		return value

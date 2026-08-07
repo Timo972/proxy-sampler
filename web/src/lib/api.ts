@@ -370,6 +370,18 @@ export interface RunReport {
   ips: IPRow[]
 }
 
+export interface RunConfig {
+  max_variants_per_run: number
+}
+
+export function useRunConfig() {
+  return useQuery({
+    queryKey: ['run-config'],
+    queryFn: () => api<RunConfig>('/api/config'),
+    staleTime: Infinity,
+  })
+}
+
 export function useRuns() {
   const visible = useDocumentVisible()
   return useQuery({

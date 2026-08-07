@@ -155,6 +155,16 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
         '503': {$ref: '#/components/responses/DependencyUnavailable'}
+  /api/config:
+    get:
+      operationId: runConfig
+      responses:
+        '200':
+          description: Run-related client configuration
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RunConfig'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /api/runs:
     post:
       operationId: createRun
@@ -594,6 +604,11 @@ components:
         dial_timeout_ms: {type: integer, minimum: 100, maximum: 2147483647, default: 10000}
         max_samples: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
         max_duration_seconds: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
+    RunConfig:
+      type: object
+      required: [max_variants_per_run]
+      properties:
+        max_variants_per_run: {type: integer, minimum: 1}
     Run:
       type: object
       required: [id, name, template_display, status, variant_count, distinct_ips, created_at]

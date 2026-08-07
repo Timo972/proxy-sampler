@@ -46,13 +46,12 @@ func Expand(t Template, axes map[string]AxisSpec, rnd RandString, maxVariants in
 	sort.Strings(fixedNames)
 	sort.Strings(randomNames)
 
-	// Check variant count and cap before materializing any axis values.
-	total, err := plannedCount(placeholders, axes)
+	// Check variant count and cap before materializing any axis values. The
+	// cap is enforced incrementally so a crafted set of axes cannot overflow
+	// the product past the limit.
+	total, err := plannedCount(placeholders, axes, maxVariants)
 	if err != nil {
 		return nil, err
-	}
-	if total > maxVariants {
-		return nil, fmt.Errorf("%d variants exceed the limit of %d", total, maxVariants)
 	}
 
 	fixedValues, err := fixedAxisValues(fixedNames, axes)
@@ -92,29 +91,44 @@ func Expand(t Template, axes map[string]AxisSpec, rnd RandString, maxVariants in
 // plannedCount computes the total number of variants without materializing
 // any axis values. This allows us to validate and check the cap before
 // allocating large slices for range axes.
-func plannedCount(placeholders []string, axes map[string]AxisSpec) (int, error) {
+func plannedCount(placeholders []string, axes map[string]AxisSpec, maxVariants int) (int, error) {
 	total := 1
 	for _, name := range placeholders {
 		spec := axes[name]
+		var size int
 		switch spec.Kind {
 		case AxisList:
 			if len(spec.Values) == 0 {
 				return 0, fmt.Errorf("list axis %q has no values", name)
 			}
-			total *= len(spec.Values)
+			size = len(spec.Values)
 		case AxisRange:
 			if spec.From > spec.To {
 				return 0, fmt.Errorf("range axis %q has from > to", name)
 			}
-			total *= (spec.To - spec.From + 1)
+			// Guard the width computation against overflow (e.g. To==MaxInt)
+			// before it participates in the running product.
+			if spec.To-spec.From < 0 || spec.To-spec.From >= maxVariants {
+				return 0, fmt.Errorf("range axis %q exceeds the limit of %d", name, maxVariants)
+			}
+			size = spec.To - spec.From + 1
 		case AxisRandom:
 			if spec.Count < 1 {
 				return 0, fmt.Errorf("random axis %q count must be >= 1", name)
 			}
-			total *= spec.Count
+			if spec.Length < 0 || spec.Length > MaxRandomLength {
+				return 0, fmt.Errorf("random axis %q length must be between 0 and %d", name, MaxRandomLength)
+			}
+			size = spec.Count
 		default:
 			return 0, fmt.Errorf("axis %q has unknown kind %q", name, spec.Kind)
 		}
+		// Enforce the cap on every multiplication so the product can never
+		// overflow past maxVariants (division avoids computing total*size).
+		if size > maxVariants || total > maxVariants/size {
+			return 0, fmt.Errorf("variants exceed the limit of %d", maxVariants)
+		}
+		total *= size
 	}
 	if total <= 0 {
 		return 0, fmt.Errorf("axes produce no variants")
@@ -137,8 +151,13 @@ func fixedAxisValues(names []string, axes map[string]AxisSpec) (map[string][]str
 				return nil, fmt.Errorf("range axis %q has from > to", name)
 			}
 			nums := make([]string, 0, spec.To-spec.From+1)
-			for n := spec.From; n <= spec.To; n++ {
+			// Break after appending To rather than incrementing past it, so a
+			// range ending at the maximum integer cannot wrap and loop forever.
+			for n := spec.From; ; n++ {
 				nums = append(nums, strconv.Itoa(n))
+				if n == spec.To {
+					break
+				}
 			}
 			values[name] = nums
 		default:

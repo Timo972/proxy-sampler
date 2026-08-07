@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -151,6 +152,80 @@ func (s *Store) RunIPObservations(ctx context.Context, id uuid.UUID) ([]variatio
 		result = append(result, obs)
 	}
 	return result, nil
+}
+
+// streamPoolIPsSQL deduplicates a run's exit IPs server-side: it aggregates
+// session_ips across the run's children (summing hits, taking the earliest
+// first_seen and latest last_seen) and joins each distinct IP's reputation
+// once, streaming one row per IP in ascending order.
+const streamPoolIPsSQL = `SELECT
+  agg.ip::text AS ip, agg.hit_count, agg.first_seen, agg.last_seen,
+  CAST(COALESCE(r.ip::text, '') AS text) AS reputation_ip,
+  r.country, r.isp, r.asn, r.risk_score, r.greynoise_class, r.dnsbl_listed, r.dnsbl_hits, r.category
+FROM (
+  SELECT si.ip AS ip, SUM(si.hit_count)::bigint AS hit_count,
+         MIN(si.first_seen) AS first_seen, MAX(si.last_seen) AS last_seen
+  FROM session_ips AS si
+  JOIN sampling_sessions AS s ON s.id = si.session_id
+  WHERE s.run_id = $1
+  GROUP BY si.ip
+) AS agg
+LEFT JOIN ip_reputation_cache AS r ON r.ip = agg.ip
+ORDER BY agg.ip`
+
+// StreamPoolIPs visits each distinct exit IP of a run once, deduped and
+// aggregated in the database, so a large export never materializes the whole
+// pool in memory.
+func (s *Store) StreamPoolIPs(ctx context.Context, runID uuid.UUID, visit func(variation.IPRow) error) error {
+	rows, err := s.pool.Query(ctx, streamPoolIPsSQL, runID)
+	if err != nil {
+		return fmt.Errorf("stream pool ips: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			ip                                     string
+			hitCount                               int64
+			firstSeen, lastSeen                    pgtype.Timestamptz
+			reputationIP                           string
+			country, isp, asn, greynoise, category *string
+			riskScore                              *int32
+			dnsblListed                            *bool
+			dnsblHits                              *string
+		)
+		if err := rows.Scan(&ip, &hitCount, &firstSeen, &lastSeen, &reputationIP,
+			&country, &isp, &asn, &riskScore, &greynoise, &dnsblListed, &dnsblHits, &category); err != nil {
+			return fmt.Errorf("scan pool ip: %w", err)
+		}
+		addr, err := parseAddr(ip, "pool ip")
+		if err != nil {
+			return err
+		}
+		row := variation.IPRow{
+			IP: addr.String(), Category: "unknown", DNSBLHits: []string{},
+			HitCount: hitCount, FirstSeen: firstSeen.Time, LastSeen: lastSeen.Time,
+		}
+		if reputationIP != "" {
+			row.Category = variation.NormalizeCategory(stringValue(category))
+			row.Country, row.ISP, row.ASN = stringValue(country), stringValue(isp), stringValue(asn)
+			row.GreyNoiseClass = stringValue(greynoise)
+			row.RiskScore = intPtr(riskScore)
+			if dnsblListed != nil {
+				row.DNSBLListed = *dnsblListed
+			}
+			if dnsblHits != nil && *dnsblHits != "" {
+				var hits []string
+				if err := json.Unmarshal([]byte(*dnsblHits), &hits); err != nil {
+					return fmt.Errorf("decode DNSBL hits: %w", err)
+				}
+				row.DNSBLHits = append(row.DNSBLHits, hits...)
+			}
+		}
+		if err := visit(row); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 func (s *Store) DeleteRun(ctx context.Context, id uuid.UUID) error {

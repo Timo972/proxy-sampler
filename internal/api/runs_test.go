@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -152,10 +153,23 @@ func TestStopRunNotFound(t *testing.T) {
 type memoryRunStore struct {
 	runs     []variation.Run
 	children map[uuid.UUID][]variation.ChildSession
+	poolIPs  map[uuid.UUID][]variation.IPRow
 }
 
 func newMemoryRunStore() *memoryRunStore {
-	return &memoryRunStore{children: map[uuid.UUID][]variation.ChildSession{}}
+	return &memoryRunStore{
+		children: map[uuid.UUID][]variation.ChildSession{},
+		poolIPs:  map[uuid.UUID][]variation.IPRow{},
+	}
+}
+
+func (m *memoryRunStore) StreamPoolIPs(_ context.Context, id uuid.UUID, visit func(variation.IPRow) error) error {
+	for _, row := range m.poolIPs[id] {
+		if err := visit(row); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *memoryRunStore) CreateRun(_ context.Context, run variation.Run, children []variation.ChildSession) error {
@@ -210,4 +224,53 @@ func testRunHandlerWithCap(t *testing.T, store session.Store, runStore variation
 	}
 	server := NewServer(store, control, cipher, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}, runStore, cap)
 	return server.Handler()
+}
+
+func TestRunConfigReturnsConfiguredCap(t *testing.T) {
+	handler := testRunHandlerWithCap(t, newMemoryStore(), newMemoryRunStore(), &fakeControl{}, 42)
+	resp := request(t, handler, http.MethodGet, "/api/config", "")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", resp.Code, resp.Body.String())
+	}
+	if !strings.Contains(resp.Body.String(), `"max_variants_per_run":42`) {
+		t.Fatalf("body = %s, want max_variants_per_run 42", resp.Body.String())
+	}
+}
+
+func TestCreateRunRejectsMalformedJSON(t *testing.T) {
+	cases := map[string]string{
+		"unknown top-level field": `{"name":"r","template":"p://u-{c}:pw@g.example:1080","axes":{"c":{"kind":"list","values":["de"]}},"mode":"sticky","cadence_seconds":30,"max_sample":5}`,
+		"null on non-nullable":    `{"name":"r","template":"p://u-{c}:pw@g.example:1080","axes":{"c":{"kind":"list","values":["de"]}},"mode":"sticky","cadence_seconds":30,"probes_per_sample":null}`,
+		"unknown axis field":      `{"name":"r","template":"p://u-{c}:pw@g.example:1080","axes":{"c":{"kind":"list","value":["de"]}},"mode":"sticky","cadence_seconds":30}`,
+		"trailing data":           `{"name":"r","template":"p://u-{c}:pw@g.example:1080","axes":{"c":{"kind":"list","values":["de"]}},"mode":"sticky","cadence_seconds":30}{}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			handler := testRunHandler(t, newMemoryStore(), newMemoryRunStore(), &fakeControl{})
+			resp := request(t, handler, http.MethodPost, "/api/runs", body)
+			if resp.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", resp.Code, resp.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreateRunRollsBackWhenChildStartFails(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	control := &fakeControl{startErr: errors.New("prepare worker failed")}
+	handler := testRunHandler(t, store, runStore, control)
+
+	body := `{"name":"r","template":"socks5h://u-cc-{country}:pw@gate.example:1080","axes":{"country":{"kind":"list","values":["de","us","fr"]}},"mode":"sticky","cadence_seconds":30}`
+	resp := request(t, handler, http.MethodPost, "/api/runs", body)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (rollback on start failure); body=%s", resp.Code, resp.Body.String())
+	}
+	if len(runStore.runs) != 0 {
+		t.Fatalf("run not rolled back: %d runs remain", len(runStore.runs))
+	}
+	if control.deleteCount != 3 {
+		t.Fatalf("Delete calls = %d, want 3 (every child cleaned up)", control.deleteCount)
+	}
 }

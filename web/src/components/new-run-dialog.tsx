@@ -4,7 +4,7 @@ import { cloneElement, type ReactElement, useState } from 'react'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 
-import { APIError, type AxisSpec, type CreateRunRequest, useCreateRun } from '../lib/api'
+import { APIError, type AxisSpec, type CreateRunRequest, useCreateRun, useRunConfig } from '../lib/api'
 import { variantCount } from '../lib/variation'
 import { Alert } from './ui/alert'
 import { Button } from './ui/button'
@@ -52,7 +52,24 @@ const formSchema = z.object({
   template: z.string().min(1, 'Proxy template is required'),
   mode: z.string().refine((value) => value === 'sticky' || value === 'pool', 'Choose a sampling mode'),
   cadence: z.string().regex(positiveInteger, 'Cadence must be a positive integer'),
-  axes: z.array(axisSchema).min(1, 'Add at least one axis'),
+  axes: z
+    .array(axisSchema)
+    .min(1, 'Add at least one axis')
+    .superRefine((axes, ctx) => {
+      // Axis names become object keys, so duplicates would silently overwrite
+      // one another and drop axes from the run. Reject them, flagging the
+      // duplicate row.
+      const seen = new Set<string>()
+      axes.forEach((axis, index) => {
+        const name = axis.name.trim()
+        if (name === '') return
+        if (seen.has(name)) {
+          ctx.addIssue({ code: 'custom', message: 'Axis names must be unique', path: [index, 'name'] })
+        } else {
+          seen.add(name)
+        }
+      })
+    }),
   probes: z.string().refine((value) => value === '' || positiveInteger.test(value), 'Enter a positive integer or leave blank').refine((value) => value === '' || Number(value) <= 255, 'Probes cannot exceed 255'),
   probeTarget: z.string().refine((value) => value === '' || isHTTPURL(value), 'Enter an HTTP or HTTPS URL'),
   dialTimeout: z.string().refine((value) => value === '' || positiveInteger.test(value), 'Enter a positive integer or leave blank').refine((value) => value === '' || Number(value) >= 100, 'Timeout must be at least 100 ms'),
@@ -81,6 +98,8 @@ const defaults: FormValues = {
 
 export function NewRunDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const create = useCreateRun()
+  const config = useRunConfig()
+  const maxVariants = config.data?.max_variants_per_run ?? MAX_VARIANTS
   const [advanced, setAdvanced] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
   const form = useForm<FormValues, unknown, ParsedFormValues>({ resolver: zodResolver(formSchema), defaultValues: defaults })
@@ -89,7 +108,7 @@ export function NewRunDialog({ open, onClose }: { open: boolean; onClose: () => 
 
   const builtAxes = buildAxesRecord(watchedAxes)
   const count = variantCount(builtAxes)
-  const overCap = count > MAX_VARIANTS
+  const overCap = count > maxVariants
 
   const changeOpen = (next: boolean) => {
     if (create.isPending) return
@@ -186,7 +205,7 @@ export function NewRunDialog({ open, onClose }: { open: boolean; onClose: () => 
                 />
               ))}
               <p className={overCap ? 'field-error' : 'field-hint'} role={overCap ? 'alert' : undefined}>
-                {count} variants{overCap ? ` — exceeds the maximum of ${MAX_VARIANTS}. Remove or narrow an axis.` : ''}
+                {count} variants{overCap ? ` — exceeds the maximum of ${maxVariants}. Remove or narrow an axis.` : ''}
               </p>
             </div>
 

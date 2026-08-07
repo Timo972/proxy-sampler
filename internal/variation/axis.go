@@ -29,10 +29,19 @@ type RandString func(length int) (string, error)
 
 const randAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
-// DefaultRandString draws an alphanumeric value from crypto/rand.
+// MaxRandomLength bounds a random axis's value length. Session identifiers are
+// short; this ceiling keeps a crafted request from forcing a huge allocation.
+const MaxRandomLength = 64
+
+// DefaultRandString draws an alphanumeric value from crypto/rand. Length is
+// clamped to [1, MaxRandomLength] as defense in depth; callers validate it up
+// front (see plannedCount).
 func DefaultRandString(length int) (string, error) {
 	if length <= 0 {
 		length = 8
+	}
+	if length > MaxRandomLength {
+		length = MaxRandomLength
 	}
 	out := make([]byte, length)
 	for i := range out {

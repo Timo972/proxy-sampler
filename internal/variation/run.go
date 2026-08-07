@@ -77,5 +77,9 @@ type Store interface {
 	RunByID(ctx context.Context, id uuid.UUID) (RunSummary, error)
 	RunSessions(ctx context.Context, id uuid.UUID) ([]VariantSession, error)
 	RunIPObservations(ctx context.Context, id uuid.UUID) ([]IPObservation, error)
+	// StreamPoolIPs visits each distinct exit IP of a run once, deduped and
+	// aggregated server-side, so a large export never holds the whole pool in
+	// memory. Rows arrive in ascending IP order.
+	StreamPoolIPs(ctx context.Context, id uuid.UUID, visit func(IPRow) error) error
 	DeleteRun(ctx context.Context, id uuid.UUID) error
 }

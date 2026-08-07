@@ -2,6 +2,7 @@ package variation
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -98,5 +99,42 @@ func TestExpandEnforcesCap(t *testing.T) {
 	}
 	if _, err := Expand(tmpl, axes, stubRand(), 50); err == nil {
 		t.Fatal("expected error: 100 variants exceeds cap 50")
+	}
+}
+
+func TestExpandRejectsHugeRandomLength(t *testing.T) {
+	tmpl, _ := ParseTemplate("p://u-{s}@gate:1080")
+	axes := map[string]AxisSpec{"s": {Kind: AxisRandom, Count: 1, Length: MaxRandomLength + 1}}
+	if _, err := Expand(tmpl, axes, stubRand(), 128); err == nil {
+		t.Fatal("expected error: random length exceeds MaxRandomLength")
+	}
+}
+
+func TestExpandRangeAtMaxIntDoesNotWrap(t *testing.T) {
+	tmpl, _ := ParseTemplate("p://gate:{port}")
+	// A single-value range at the maximum int must produce exactly one value
+	// and terminate, not loop forever via integer wraparound.
+	axes := map[string]AxisSpec{"port": {Kind: AxisRange, From: math.MaxInt, To: math.MaxInt}}
+	variants, err := Expand(tmpl, axes, stubRand(), 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(variants) != 1 {
+		t.Fatalf("variants = %d, want 1", len(variants))
+	}
+}
+
+func TestExpandProductOverflowCannotBypassCap(t *testing.T) {
+	tmpl, _ := ParseTemplate("p://u-{a}-{b}-{c}@gate:1080")
+	// Axis sizes whose product overflows int back to a small positive value
+	// must still be rejected by the cap, not allowed to attempt a huge range
+	// allocation.
+	axes := map[string]AxisSpec{
+		"a": {Kind: AxisRange, From: 0, To: math.MaxInt},
+		"b": {Kind: AxisList, Values: []string{"x", "y"}},
+		"c": {Kind: AxisRange, From: 0, To: math.MaxInt},
+	}
+	if _, err := Expand(tmpl, axes, stubRand(), 128); err == nil {
+		t.Fatal("expected error: overflowing product must not bypass the cap")
 	}
 }

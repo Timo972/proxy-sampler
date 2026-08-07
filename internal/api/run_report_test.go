@@ -31,6 +31,35 @@ func TestRunReportReturnsPoolRollup(t *testing.T) {
 	}
 }
 
+func TestExportRunCSVStreamsDedupedPoolRows(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	handler := testRunHandlerWithReader(t, store, runStore, &fakeControl{}, stubReader{})
+	request(t, handler, http.MethodPost, "/api/runs",
+		`{"name":"poolcheck","template":"p://u-{c}:pw@gate.example:1080","axes":{"c":{"kind":"list","values":["de"]}},"mode":"sticky","cadence_seconds":30}`)
+	runID := runStore.runs[0].ID
+	risk := 82
+	runStore.poolIPs[runID] = []variation.IPRow{
+		{IP: "203.0.113.7", Category: "residential", Country: "DE", ISP: "ISP-1", ASN: "AS1", RiskScore: &risk, GreyNoiseClass: "benign", DNSBLListed: true, DNSBLHits: []string{"zen", "spamhaus"}, HitCount: 9},
+	}
+
+	resp := request(t, handler, http.MethodGet, "/api/runs/"+runID.String()+"/export.csv", "")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", resp.Code, resp.Body.String())
+	}
+	if ct := resp.Header().Get("Content-Type"); ct != "text/csv" {
+		t.Fatalf("content-type = %q, want text/csv", ct)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "ip,category,country,isp,asn,risk_score,greynoise_class,dnsbl_listed,dnsbl_hits,hit_count") {
+		t.Fatalf("missing header row: %s", body)
+	}
+	// risk_score rendered, dnsbl_hits joined with "|", hit_count present.
+	if !strings.Contains(body, "203.0.113.7,residential,DE,ISP-1,AS1,82,benign,true,zen|spamhaus,9") {
+		t.Fatalf("data row not streamed as expected: %s", body)
+	}
+}
+
 func TestRunReportNotFound(t *testing.T) {
 	handler := testRunHandlerWithReader(t, newMemoryStore(), newMemoryRunStore(), &fakeControl{}, stubReader{})
 	resp := request(t, handler, http.MethodGet, "/api/runs/"+uuid.NewString()+"/report", "")

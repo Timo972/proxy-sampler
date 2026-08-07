@@ -1,11 +1,12 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -136,11 +137,24 @@ func (s *Server) CreateRun(ctx context.Context, request openapi.CreateRunRequest
 		return nil, internalError()
 	}
 
+	// Every child shares one proxy template, so a Start failure (e.g. an
+	// unsupported scheme, an unreachable gateway) is systemic rather than
+	// per-variant. Roll the whole run back instead of returning a 201 for a
+	// run with dead or missing variants.
+	var startErr error
 	for _, child := range children {
 		if err := s.control.Start(ctx, child.Session.ID); err != nil {
-			cleanupContext := context.WithoutCancel(ctx)
-			_ = s.store.Stop(cleanupContext, child.Session.ID, s.now().UTC())
+			startErr = err
+			break
 		}
+	}
+	if startErr != nil {
+		cleanup := context.WithoutCancel(ctx)
+		for _, child := range children {
+			_ = s.control.Delete(cleanup, child.Session.ID)
+		}
+		_ = s.runStore.DeleteRun(cleanup, run.ID)
+		return nil, internalError()
 	}
 
 	summary, err := s.runStore.RunByID(ctx, run.ID)
@@ -148,6 +162,17 @@ func (s *Server) CreateRun(ctx context.Context, request openapi.CreateRunRequest
 		return nil, internalError()
 	}
 	return openapi.CreateRun201JSONResponse(mapRun(summary)), nil
+}
+
+// RunConfig exposes run-related client configuration, currently the server's
+// variant cap, so the UI can validate against the real limit instead of a
+// hard-coded default.
+func (s *Server) RunConfig(_ context.Context, _ openapi.RunConfigRequestObject) (openapi.RunConfigResponseObject, error) {
+	limit := s.maxVariants
+	if limit <= 0 {
+		limit = 128
+	}
+	return openapi.RunConfig200JSONResponse{MaxVariantsPerRun: limit}, nil
 }
 
 // ListRuns returns every durable run summary.
@@ -264,7 +289,9 @@ func (s *Server) fanOut(ctx context.Context, runID uuid.UUID, op func(context.Co
 	return nil
 }
 
-// ExportRunCSV streams the deduped pool IP list with reputation columns.
+// ExportRunCSV streams the deduped pool IP list with reputation columns. The
+// rows are deduplicated server-side and streamed through a pipe so a run with
+// an unbounded number of distinct exit IPs cannot exhaust service memory.
 func (s *Server) ExportRunCSV(ctx context.Context, request openapi.ExportRunCSVRequestObject) (openapi.ExportRunCSVResponseObject, error) {
 	if s.runStore == nil {
 		return nil, dependencyUnavailable()
@@ -276,47 +303,96 @@ func (s *Server) ExportRunCSV(ctx context.Context, request openapi.ExportRunCSVR
 	if err != nil {
 		return nil, dependencyUnavailable()
 	}
-	variants, err := s.runStore.RunSessions(ctx, request.Id)
-	if err != nil {
-		return nil, dependencyUnavailable()
-	}
-	observations, err := s.runStore.RunIPObservations(ctx, request.Id)
-	if err != nil {
-		return nil, dependencyUnavailable()
-	}
-	pool := variation.BuildPoolReport(variants, observations)
 
-	data := runIPCSV(pool.IPs)
+	body, started := s.runCSVStream(ctx, request.Id)
+	if err := <-started; err != nil {
+		_ = body.Close()
+		return nil, dependencyUnavailable()
+	}
 	filename := sanitizedFilename(summary.Name) + "-" + summary.ID.String() + "-pool.csv"
 	disposition := `attachment; filename="` + filename + `"`
-	return openapi.ExportRunCSV200TextcsvResponse{
-		Body:          bytes.NewReader(data),
-		Headers:       openapi.ExportRunCSV200ResponseHeaders{ContentDisposition: &disposition},
-		ContentLength: int64(len(data)),
-	}, nil
+	return runCSVStreamResponse{body: body, contentDisposition: disposition}, nil
 }
 
 var runCSVHeader = []string{"ip", "category", "country", "isp", "asn", "risk_score", "greynoise_class", "dnsbl_listed", "dnsbl_hits", "hit_count"}
 
-// runIPCSV renders the deduped pool IP list as CSV bytes. The pool is bounded
-// by MAX_VARIANTS_PER_RUN x distinct IPs, small enough to buffer in memory.
-func runIPCSV(rows []variation.IPRow) []byte {
-	var buf bytes.Buffer
-	writer := csv.NewWriter(&buf)
-	_ = writer.Write(runCSVHeader)
-	for _, row := range rows {
-		risk := ""
-		if row.RiskScore != nil {
-			risk = strconv.Itoa(*row.RiskScore)
+// runCSVStream writes the deduped pool CSV to a pipe. The header is written
+// before the first row so an empty pool still yields a valid header-only file;
+// the started channel reports whether streaming began without error so the
+// caller can still surface a structured error before any bytes are sent.
+func (s *Server) runCSVStream(ctx context.Context, id openapi.RunID) (*io.PipeReader, <-chan error) {
+	reader, writer := io.Pipe()
+	started := make(chan error, 1)
+	go func() {
+		csvWriter := csv.NewWriter(writer)
+		err := csvWriter.Write(runCSVHeader)
+		if err == nil {
+			err = csvWriter.Error()
 		}
-		_ = writer.Write([]string{
-			row.IP, row.Category, row.Country, row.ISP, row.ASN, risk, row.GreyNoiseClass,
-			strconv.FormatBool(row.DNSBLListed), strings.Join(row.DNSBLHits, "|"),
-			strconv.FormatInt(row.HitCount, 10),
+		started <- err
+		if err != nil {
+			_ = writer.CloseWithError(err)
+			return
+		}
+		streamErr := s.runStore.StreamPoolIPs(ctx, id, func(row variation.IPRow) error {
+			if err := writeRunIPRow(csvWriter, row); err != nil {
+				return err
+			}
+			csvWriter.Flush()
+			return csvWriter.Error()
 		})
+		csvWriter.Flush()
+		if streamErr == nil {
+			streamErr = csvWriter.Error()
+		}
+		if streamErr != nil {
+			_ = writer.CloseWithError(streamErr)
+			return
+		}
+		_ = writer.Close()
+	}()
+	return reader, started
+}
+
+func writeRunIPRow(writer *csv.Writer, row variation.IPRow) error {
+	risk := ""
+	if row.RiskScore != nil {
+		risk = strconv.Itoa(*row.RiskScore)
 	}
-	writer.Flush()
-	return buf.Bytes()
+	return writer.Write([]string{
+		row.IP, row.Category, row.Country, row.ISP, row.ASN, risk, row.GreyNoiseClass,
+		strconv.FormatBool(row.DNSBLListed), strings.Join(row.DNSBLHits, "|"),
+		strconv.FormatInt(row.HitCount, 10),
+	})
+}
+
+type runCSVStreamResponse struct {
+	body               *io.PipeReader
+	contentDisposition string
+}
+
+func (response runCSVStreamResponse) VisitExportRunCSVResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", response.contentDisposition)
+	w.WriteHeader(http.StatusOK)
+	defer response.body.Close()
+	buffer := make([]byte, 32*1024)
+	for {
+		count, readErr := response.body.Read(buffer)
+		if count > 0 {
+			if _, err := w.Write(buffer[:count]); err != nil {
+				return err
+			}
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			// Headers/rows already sent: end the truncated stream rather than
+			// appending a JSON error to an otherwise valid CSV prefix.
+			return nil
+		}
+	}
 }
 
 // mapAxes converts generated OpenAPI axis specs into the variation package's
