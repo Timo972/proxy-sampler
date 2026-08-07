@@ -57,8 +57,10 @@ func TestCreateRunRejectsCapExceeded(t *testing.T) {
 
 func TestCreateRunEnforcesRequestBodyLimit(t *testing.T) {
 	const bodyLimit = 1 << 20
-	prefix := `{"name":"Boundary","template":"socks5://proxy.example:1080/`
-	suffix := `","mode":"sticky","cadence_seconds":10,"axes":{}}`
+	// Pad a single list-axis value (not the template, which is now size-capped)
+	// so the body reaches exactly the limit while staying a valid 1-variant run.
+	prefix := `{"name":"Boundary","template":"socks5h://u-{c}:pw@proxy.example:1080","mode":"sticky","cadence_seconds":10,"axes":{"c":{"kind":"list","values":["`
+	suffix := `"]}}}`
 	bodyAtLimit := prefix + strings.Repeat("a", bodyLimit-len(prefix)-len(suffix)) + suffix
 	if len(bodyAtLimit) != bodyLimit {
 		t.Fatalf("boundary body length = %d, want %d", len(bodyAtLimit), bodyLimit)
@@ -151,9 +153,10 @@ func TestStopRunNotFound(t *testing.T) {
 }
 
 type memoryRunStore struct {
-	runs     []variation.Run
-	children map[uuid.UUID][]variation.ChildSession
-	poolIPs  map[uuid.UUID][]variation.IPRow
+	runs      []variation.Run
+	children  map[uuid.UUID][]variation.ChildSession
+	poolIPs   map[uuid.UUID][]variation.IPRow
+	streamErr error
 }
 
 func newMemoryRunStore() *memoryRunStore {
@@ -164,6 +167,9 @@ func newMemoryRunStore() *memoryRunStore {
 }
 
 func (m *memoryRunStore) StreamPoolIPs(_ context.Context, id uuid.UUID, visit func(variation.IPRow) error) error {
+	if m.streamErr != nil {
+		return m.streamErr
+	}
 	for _, row := range m.poolIPs[id] {
 		if err := visit(row); err != nil {
 			return err
@@ -252,6 +258,35 @@ func TestCreateRunRejectsMalformedJSON(t *testing.T) {
 				t.Fatalf("status = %d, want 400; body=%s", resp.Code, resp.Body.String())
 			}
 		})
+	}
+}
+
+func TestCreateRunRejectsOversizedTemplate(t *testing.T) {
+	handler := testRunHandler(t, newMemoryStore(), newMemoryRunStore(), &fakeControl{})
+	longTemplate := "socks5h://u:pw@gate.example:1080/" + strings.Repeat("a", 4100)
+	body := `{"name":"r","template":"` + longTemplate + `","axes":{},"mode":"sticky","cadence_seconds":30}`
+	resp := request(t, handler, http.MethodPost, "/api/runs", body)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (template exceeds size cap); body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestCreateRunKeepsRunWhenRollbackCleanupFails(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	control := &fakeControl{startErr: errors.New("start failed"), deleteErr: errors.New("delete failed")}
+	handler := testRunHandler(t, store, runStore, control)
+
+	body := `{"name":"r","template":"socks5h://u-cc-{country}:pw@gate.example:1080","axes":{"country":{"kind":"list","values":["de","us"]}},"mode":"sticky","cadence_seconds":30}`
+	resp := request(t, handler, http.MethodPost, "/api/runs", body)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
+	}
+	// Child cleanup failed, so the run must NOT be cascade-deleted out from
+	// under a possibly-live worker; it stays durable and API-deletable.
+	if len(runStore.runs) != 1 {
+		t.Fatalf("runs = %d, want 1 (run kept when cleanup unconfirmed)", len(runStore.runs))
 	}
 }
 

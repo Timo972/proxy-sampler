@@ -39,7 +39,11 @@ func (s *Server) CreateRun(ctx context.Context, request openapi.CreateRunRequest
 	if !validPersistedInteger(body.CadenceSeconds, 1) {
 		return nil, invalidRequest()
 	}
-	if body.Template == nil || strings.TrimSpace(*body.Template) == "" {
+	// The template is rendered once per variant (and each rendering is then
+	// encrypted), so an oversized template multiplies into a large allocation
+	// under the variant cap. A proxy URL is small; cap the template well below
+	// the request-body limit to bound the amplification.
+	if body.Template == nil || strings.TrimSpace(*body.Template) == "" || len(*body.Template) > maxTemplateBytes {
 		return nil, invalidRequest()
 	}
 
@@ -150,10 +154,23 @@ func (s *Server) CreateRun(ctx context.Context, request openapi.CreateRunRequest
 	}
 	if startErr != nil {
 		cleanup := context.WithoutCancel(ctx)
+		cleanupConfirmed := true
 		for _, child := range children {
-			_ = s.control.Delete(cleanup, child.Session.ID)
+			// Delete stops the worker (if it started), crosses the ClickHouse
+			// flush barrier, and removes the child row. A child that never
+			// started has nothing to stop.
+			if err := s.control.Delete(cleanup, child.Session.ID); err != nil && !errors.Is(err, session.ErrNotFound) {
+				cleanupConfirmed = false
+			}
 		}
-		_ = s.runStore.DeleteRun(cleanup, run.ID)
+		// Only delete the run row once every child is confirmed gone. Deleting
+		// it earlier would cascade-delete child rows out from under a worker
+		// whose cleanup failed, orphaning it. If cleanup is unconfirmed we
+		// leave the run durable and consistent — the operator can DELETE it via
+		// the API — which is strictly safer than an unmanageable orphan worker.
+		if cleanupConfirmed {
+			_ = s.runStore.DeleteRun(cleanup, run.ID)
+		}
 		return nil, internalError()
 	}
 
@@ -316,31 +333,53 @@ func (s *Server) ExportRunCSV(ctx context.Context, request openapi.ExportRunCSVR
 
 var runCSVHeader = []string{"ip", "category", "country", "isp", "asn", "risk_score", "greynoise_class", "dnsbl_listed", "dnsbl_hits", "hit_count"}
 
-// runCSVStream writes the deduped pool CSV to a pipe. The header is written
-// before the first row so an empty pool still yields a valid header-only file;
-// the started channel reports whether streaming began without error so the
-// caller can still surface a structured error before any bytes are sent.
+// runCSVStream writes the deduped pool CSV to a pipe. It announces success on
+// the started channel only once the pool query has actually produced its first
+// row or completed cleanly — not merely after buffering the header — so a query
+// that fails before yielding any row is reported to the caller (which turns it
+// into a 503) instead of emitting a valid-looking header-only CSV.
 func (s *Server) runCSVStream(ctx context.Context, id openapi.RunID) (*io.PipeReader, <-chan error) {
 	reader, writer := io.Pipe()
 	started := make(chan error, 1)
 	go func() {
 		csvWriter := csv.NewWriter(writer)
-		err := csvWriter.Write(runCSVHeader)
-		if err == nil {
-			err = csvWriter.Error()
+		announced := false
+		headerWritten := false
+		announce := func(err error) {
+			if !announced {
+				announced = true
+				started <- err
+			}
 		}
-		started <- err
-		if err != nil {
-			_ = writer.CloseWithError(err)
-			return
+		writeHeader := func() error {
+			if headerWritten {
+				return nil
+			}
+			headerWritten = true
+			return csvWriter.Write(runCSVHeader)
 		}
 		streamErr := s.runStore.StreamPoolIPs(ctx, id, func(row variation.IPRow) error {
+			announce(nil)
+			if err := writeHeader(); err != nil {
+				return err
+			}
 			if err := writeRunIPRow(csvWriter, row); err != nil {
 				return err
 			}
 			csvWriter.Flush()
 			return csvWriter.Error()
 		})
+		// The query failed before yielding any row: report it so the handler
+		// can still return a structured error.
+		if !announced && streamErr != nil {
+			announce(streamErr)
+			_ = writer.CloseWithError(streamErr)
+			return
+		}
+		announce(nil)
+		if streamErr == nil {
+			streamErr = writeHeader() // empty pool still gets a header row
+		}
 		csvWriter.Flush()
 		if streamErr == nil {
 			streamErr = csvWriter.Error()

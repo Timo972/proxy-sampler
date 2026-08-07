@@ -130,6 +130,69 @@ func TestBuildPoolReportCellParamsExcludeRandomValues(t *testing.T) {
 	}
 }
 
+func TestBuildPoolReportHonorUnknownWhenNoTarget(t *testing.T) {
+	s1 := uuid.New()
+	// A random/port-only variant targets no country or ISP, so its honor
+	// outcome is unknown and it must not inflate the rate to 100%.
+	variants := []VariantSession{
+		{SessionID: s1, CellKey: `{}`, Params: json.RawMessage(`{"session":"abc"}`), Snapshot: session.Snapshot{SamplesTaken: 3}},
+	}
+	obs := []IPObservation{{SessionID: s1, IP: netip.MustParseAddr("9.9.9.1"), HitCount: 3, Reputation: rep("DE", "ISP-1", "residential")}}
+	report := BuildPoolReport(variants, obs)
+	if report.HonorRate != nil {
+		t.Fatalf("honor rate = %v, want nil (no country/isp target)", report.HonorRate)
+	}
+}
+
+func TestBuildPoolReportHonorUnknownWhenObservedValueMissing(t *testing.T) {
+	s1 := uuid.New()
+	// Requests an ISP, but the observed reputation carries no ISP, so there is
+	// nothing to compare: unknown, excluded from the denominator.
+	variants := []VariantSession{
+		{SessionID: s1, CellKey: `{"isp":"ACME"}`, Params: json.RawMessage(`{"isp":"ACME"}`), Snapshot: session.Snapshot{SamplesTaken: 3}},
+	}
+	obs := []IPObservation{{SessionID: s1, IP: netip.MustParseAddr("9.9.9.2"), HitCount: 3, Reputation: rep("DE", "", "residential")}}
+	report := BuildPoolReport(variants, obs)
+	if report.HonorRate != nil {
+		t.Fatalf("honor rate = %v, want nil (requested isp not observable)", report.HonorRate)
+	}
+}
+
+func TestBuildPoolReportHonorUnknownOnDominantTie(t *testing.T) {
+	s1 := uuid.New()
+	variants := []VariantSession{
+		{SessionID: s1, CellKey: `{"country":"de"}`, Params: json.RawMessage(`{"country":"de"}`), Snapshot: session.Snapshot{SamplesTaken: 3}},
+	}
+	// Two countries with equal hit weight: no unique dominant, so the outcome
+	// is unknown and deterministic (not a coin-flip on map iteration order).
+	obs := []IPObservation{
+		{SessionID: s1, IP: netip.MustParseAddr("9.9.9.3"), HitCount: 2, Reputation: rep("DE", "", "residential")},
+		{SessionID: s1, IP: netip.MustParseAddr("9.9.9.4"), HitCount: 2, Reputation: rep("US", "", "residential")},
+	}
+	report := BuildPoolReport(variants, obs)
+	if report.HonorRate != nil {
+		t.Fatalf("honor rate = %v, want nil (dominant country tie is unknown)", report.HonorRate)
+	}
+}
+
+func TestBuildPoolReportHonorExcludesUnknownFromDenominator(t *testing.T) {
+	s1, s2 := uuid.New(), uuid.New()
+	variants := []VariantSession{
+		{SessionID: s1, CellKey: `{"country":"de"}`, Params: json.RawMessage(`{"country":"de"}`), Snapshot: session.Snapshot{SamplesTaken: 3}},
+		{SessionID: s2, CellKey: `{}`, Params: json.RawMessage(`{"session":"x"}`), Snapshot: session.Snapshot{SamplesTaken: 3}}, // untargeted -> unknown
+	}
+	obs := []IPObservation{
+		{SessionID: s1, IP: netip.MustParseAddr("9.9.9.5"), HitCount: 3, Reputation: rep("DE", "", "residential")},
+		{SessionID: s2, IP: netip.MustParseAddr("9.9.9.6"), HitCount: 3, Reputation: rep("US", "", "residential")},
+	}
+	report := BuildPoolReport(variants, obs)
+	// Only the targeted, matched variant counts: 1/1 = 1; the untargeted
+	// variant is excluded rather than diluting the rate.
+	if report.HonorRate == nil || *report.HonorRate != 1 {
+		t.Fatalf("honor rate = %v, want 1 (untargeted variant excluded)", report.HonorRate)
+	}
+}
+
 func TestBuildPoolReportHonorCountsObservedVariantAfterReenable(t *testing.T) {
 	s1 := uuid.New()
 	// A re-enable resets SamplesTaken to 0 but preserves session_ips, so an

@@ -29,6 +29,11 @@ const (
 	defaultDialTimeout        = 10 * time.Second
 	maxCreateSessionBodyBytes = 1 << 20
 	maxPersistedInteger       = 2147483647
+	// maxTemplateBytes bounds a run's proxy-URL template. The template is
+	// rendered (and encrypted) once per variant, so it must be far smaller than
+	// the request-body limit to keep expansion from amplifying into a large
+	// allocation. Real proxy URLs are a few hundred bytes at most.
+	maxTemplateBytes = 4096
 )
 
 // Control owns the sampler worker lifecycle behind the HTTP API.

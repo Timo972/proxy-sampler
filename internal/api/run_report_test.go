@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -28,6 +29,21 @@ func TestRunReportReturnsPoolRollup(t *testing.T) {
 	}
 	if !strings.Contains(resp.Body.String(), `"estimated_pool_size"`) {
 		t.Fatalf("body missing pool report fields: %s", resp.Body.String())
+	}
+}
+
+func TestExportRunCSVReturns503WhenPoolQueryFailsBeforeRows(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	runStore.streamErr = errors.New("pool query failed")
+	handler := testRunHandlerWithReader(t, store, runStore, &fakeControl{}, stubReader{})
+	request(t, handler, http.MethodPost, "/api/runs",
+		`{"name":"r","template":"p://u-{c}:pw@gate.example:1080","axes":{"c":{"kind":"list","values":["de"]}},"mode":"sticky","cadence_seconds":30}`)
+	runID := runStore.runs[0].ID.String()
+
+	resp := request(t, handler, http.MethodGet, "/api/runs/"+runID+"/export.csv", "")
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (query failed before any row); body=%s", resp.Code, resp.Body.String())
 	}
 }
 

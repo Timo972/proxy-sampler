@@ -195,19 +195,22 @@ func buildHonorAndCells(variants []VariantSession, sessionObs map[uuid.UUID][]IP
 				applyComposition(&accum.composition, normalizedCategory(reputationCategory(o.Reputation)))
 			}
 		}
-		// Base the honor denominator on observation presence, not the per-run
-		// samples counter: re-enabling a session resets SamplesTaken to zero
-		// while deliberately preserving its session_ips, so keying on the
-		// counter would drop already-observed variants right after a re-enable
-		// even though their IPs still populate the pool report.
-		if len(obs) == 0 {
-			continue
-		}
-		accum.sampled++
-		globalSampled++
-		if honored := variantHonored(v.Params, obs); honored {
+		// Only variants with a determinable honor outcome enter the
+		// denominator. A variant with no target (random/port-only runs) or no
+		// known observed value for its target is "unknown" and excluded, so the
+		// rate is not inflated to a misleading 100% or deflated by counting an
+		// un-reputed variant as a mismatch. Observation presence — not the
+		// per-run SamplesTaken counter, which a re-enable resets — drives this,
+		// so already-observed variants survive a re-enable.
+		switch variantHonor(v.Params, obs) {
+		case honorMatch:
+			accum.sampled++
 			accum.honored++
+			globalSampled++
 			globalHonored++
+		case honorMismatch:
+			accum.sampled++
+			globalSampled++
 		}
 	}
 
@@ -232,23 +235,50 @@ func buildHonorAndCells(variants []VariantSession, sessionObs map[uuid.UUID][]IP
 	return honorRate, result
 }
 
-// variantHonored compares requested country/isp params against the dominant
-// observed values (weighted by hit count) across the variant's IPs.
-func variantHonored(params json.RawMessage, obs []IPObservation) bool {
+// honorOutcome is the tri-state result of comparing a variant's requested
+// targeting to its observed egress.
+type honorOutcome int
+
+const (
+	honorUnknown  honorOutcome = iota // no target, or no known observed value to compare
+	honorMatch                        // every comparable requested field matched
+	honorMismatch                     // at least one comparable requested field mismatched
+)
+
+// variantHonor compares requested country/isp params against the dominant
+// observed values across the variant's IPs. It returns honorUnknown when there
+// is nothing to compare — no target, or no known observed value for the target
+// — so such variants can be excluded from the honor-rate denominator rather
+// than silently counted as honored (100%) or as a mismatch.
+func variantHonor(params json.RawMessage, obs []IPObservation) honorOutcome {
 	requested := map[string]string{}
 	_ = json.Unmarshal(params, &requested)
 	country := firstParam(requested, "country", "cc")
 	isp := firstParam(requested, "isp")
 	if country == "" && isp == "" {
-		return true // nothing targeted -> nothing to violate
+		return honorUnknown
 	}
-	if country != "" && !strings.EqualFold(dominant(obs, func(r *session.Reputation) string { return r.Country }), country) {
-		return false
+	known := false
+	if country != "" {
+		if observed := dominant(obs, func(r *session.Reputation) string { return r.Country }); observed != "" {
+			known = true
+			if !strings.EqualFold(observed, country) {
+				return honorMismatch
+			}
+		}
 	}
-	if isp != "" && !strings.EqualFold(dominant(obs, func(r *session.Reputation) string { return r.ISP }), isp) {
-		return false
+	if isp != "" {
+		if observed := dominant(obs, func(r *session.Reputation) string { return r.ISP }); observed != "" {
+			known = true
+			if !strings.EqualFold(observed, isp) {
+				return honorMismatch
+			}
+		}
 	}
-	return true
+	if !known {
+		return honorUnknown
+	}
+	return honorMatch
 }
 
 func dominant(obs []IPObservation, pick func(*session.Reputation) string) string {
@@ -267,11 +297,24 @@ func dominant(obs []IPObservation, pick func(*session.Reputation) string) string
 		// bias dominance toward IP count instead of traffic).
 		weights[value] += max(o.HitCount, 1)
 	}
-	best, bestWeight := "", int64(0)
-	for value, weight := range weights {
-		if weight > bestWeight {
-			best, bestWeight = value, weight
+	// Require a unique maximum. A tie has no clear dominant value, so return ""
+	// (an unknown outcome) instead of letting map iteration order pick a
+	// nondeterministic winner that could flip a variant's honor result between
+	// identical report builds.
+	var maxWeight int64
+	for _, weight := range weights {
+		if weight > maxWeight {
+			maxWeight = weight
 		}
+	}
+	best, count := "", 0
+	for value, weight := range weights {
+		if weight == maxWeight {
+			best, count = value, count+1
+		}
+	}
+	if count != 1 {
+		return ""
 	}
 	return best
 }
