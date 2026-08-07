@@ -258,24 +258,29 @@ func variantHonor(params json.RawMessage, obs []IPObservation) honorOutcome {
 	if country == "" && isp == "" {
 		return honorUnknown
 	}
-	known := false
+	// A proven mismatch on any requested field wins. Otherwise every requested
+	// field must have a comparable observed value; if any cannot be compared,
+	// the outcome is unknown rather than a partial "match".
+	complete := true
 	if country != "" {
-		if observed := dominant(obs, func(r *session.Reputation) string { return r.Country }); observed != "" {
-			known = true
-			if !strings.EqualFold(observed, country) {
-				return honorMismatch
-			}
+		observed := dominant(obs, func(r *session.Reputation) string { return r.Country })
+		switch {
+		case observed == "":
+			complete = false
+		case !strings.EqualFold(observed, country):
+			return honorMismatch
 		}
 	}
 	if isp != "" {
-		if observed := dominant(obs, func(r *session.Reputation) string { return r.ISP }); observed != "" {
-			known = true
-			if !strings.EqualFold(observed, isp) {
-				return honorMismatch
-			}
+		observed := dominant(obs, func(r *session.Reputation) string { return r.ISP })
+		switch {
+		case observed == "":
+			complete = false
+		case !strings.EqualFold(observed, isp):
+			return honorMismatch
 		}
 	}
-	if !known {
+	if !complete {
 		return honorUnknown
 	}
 	return honorMatch

@@ -193,6 +193,34 @@ func TestBuildPoolReportHonorExcludesUnknownFromDenominator(t *testing.T) {
 	}
 }
 
+func TestBuildPoolReportHonorUnknownWhenOnlyOneTargetObservable(t *testing.T) {
+	s1 := uuid.New()
+	// Targets both country and ISP; country matches but the reputation carries
+	// no ISP, so the outcome is unknown rather than a full match.
+	variants := []VariantSession{
+		{SessionID: s1, CellKey: `{"country":"de","isp":"ACME"}`, Params: json.RawMessage(`{"country":"de","isp":"ACME"}`), Snapshot: session.Snapshot{SamplesTaken: 3}},
+	}
+	obs := []IPObservation{{SessionID: s1, IP: netip.MustParseAddr("9.9.9.7"), HitCount: 3, Reputation: rep("DE", "", "residential")}}
+	report := BuildPoolReport(variants, obs)
+	if report.HonorRate != nil {
+		t.Fatalf("honor rate = %v, want nil (ISP target unobservable -> unknown, not partial match)", report.HonorRate)
+	}
+}
+
+func TestBuildPoolReportHonorMismatchShortCircuitsAcrossFields(t *testing.T) {
+	s1 := uuid.New()
+	// Country matches but ISP is observably different: a proven mismatch on any
+	// field wins regardless of the other field.
+	variants := []VariantSession{
+		{SessionID: s1, CellKey: `{"country":"de","isp":"ACME"}`, Params: json.RawMessage(`{"country":"de","isp":"ACME"}`), Snapshot: session.Snapshot{SamplesTaken: 3}},
+	}
+	obs := []IPObservation{{SessionID: s1, IP: netip.MustParseAddr("9.9.9.8"), HitCount: 3, Reputation: rep("DE", "OTHER-ISP", "residential")}}
+	report := BuildPoolReport(variants, obs)
+	if report.HonorRate == nil || *report.HonorRate != 0 {
+		t.Fatalf("honor rate = %v, want 0 (isp mismatch)", report.HonorRate)
+	}
+}
+
 func TestBuildPoolReportHonorCountsObservedVariantAfterReenable(t *testing.T) {
 	s1 := uuid.New()
 	// A re-enable resets SamplesTaken to 0 but preserves session_ips, so an

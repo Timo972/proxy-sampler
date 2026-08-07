@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -174,9 +175,16 @@ func (s *Server) CreateRun(ctx context.Context, request openapi.CreateRunRequest
 		return nil, internalError()
 	}
 
-	summary, err := s.runStore.RunByID(ctx, run.ID)
-	if err != nil {
-		return nil, internalError()
+	// Build the response from what we already know rather than re-reading. A
+	// failed post-start read would return 500 while the run and its workers
+	// stay live, and — with no idempotency key — a client retry would create a
+	// duplicate live run. A freshly created run has every child running, no
+	// samples yet, and a known variant count.
+	summary := variation.RunSummary{
+		Run:          run,
+		VariantCount: len(children),
+		DistinctIPs:  0,
+		Status:       variation.RunRunning,
 	}
 	return openapi.CreateRun201JSONResponse(mapRun(summary)), nil
 }
@@ -442,6 +450,11 @@ func mapAxes(axes map[string]openapi.AxisSpec) (map[string]variation.AxisSpec, e
 		domain := variation.AxisSpec{Kind: variation.AxisKind(spec.Kind)}
 		if spec.Values != nil {
 			domain.Values = *spec.Values
+		}
+		// A range axis needs both endpoints. Nil pointers would otherwise
+		// silently become 0..0 (a live one-variant run) instead of a 400.
+		if domain.Kind == variation.AxisRange && (spec.From == nil || spec.To == nil) {
+			return nil, fmt.Errorf("range axis %q requires from and to", name)
 		}
 		if spec.From != nil {
 			domain.From = *spec.From

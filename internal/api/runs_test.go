@@ -57,40 +57,37 @@ func TestCreateRunRejectsCapExceeded(t *testing.T) {
 
 func TestCreateRunEnforcesRequestBodyLimit(t *testing.T) {
 	const bodyLimit = 1 << 20
-	// Pad a single list-axis value (not the template, which is now size-capped)
-	// so the body reaches exactly the limit while staying a valid 1-variant run.
-	prefix := `{"name":"Boundary","template":"socks5h://u-{c}:pw@proxy.example:1080","mode":"sticky","cadence_seconds":10,"axes":{"c":{"kind":"list","values":["`
-	suffix := `"]}}}`
-	bodyAtLimit := prefix + strings.Repeat("a", bodyLimit-len(prefix)-len(suffix)) + suffix
-	if len(bodyAtLimit) != bodyLimit {
-		t.Fatalf("boundary body length = %d, want %d", len(bodyAtLimit), bodyLimit)
-	}
 
-	t.Run("exact limit accepted and replayed", func(t *testing.T) {
+	t.Run("body over the limit is rejected before expansion", func(t *testing.T) {
 		store := newMemoryStore()
 		runStore := newMemoryRunStore()
 		control := &fakeControl{}
 		handler := testRunHandler(t, store, runStore, control)
-		response := request(t, handler, http.MethodPost, "/api/runs", bodyAtLimit)
+		// Padding pushes the body past the 1 MiB cap; readCappedBody rejects it
+		// during the read, before any parsing or expansion happens.
+		prefix := `{"name":"Over","template":"socks5h://u-{c}:pw@proxy.example:1080","mode":"sticky","cadence_seconds":10,"axes":{"c":{"kind":"list","values":["`
+		oversized := prefix + strings.Repeat("a", bodyLimit) + `"]}}}`
+		response := request(t, handler, http.MethodPost, "/api/runs", oversized)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", response.Code)
+		}
+		if len(runStore.runs) != 0 || control.startCount != 0 {
+			t.Fatalf("created/started = %d/%d, want 0/0 (rejected before expansion)", len(runStore.runs), control.startCount)
+		}
+	})
+
+	t.Run("normal body under the limit is accepted", func(t *testing.T) {
+		store := newMemoryStore()
+		runStore := newMemoryRunStore()
+		control := &fakeControl{}
+		handler := testRunHandler(t, store, runStore, control)
+		body := `{"name":"OK","template":"socks5h://u-{c}:pw@proxy.example:1080","axes":{"c":{"kind":"list","values":["de"]}},"mode":"sticky","cadence_seconds":10}`
+		response := request(t, handler, http.MethodPost, "/api/runs", body)
 		if response.Code != http.StatusCreated {
 			t.Fatalf("status = %d, want 201; body=%s", response.Code, response.Body.String())
 		}
 		if len(runStore.runs) != 1 || control.startCount != 1 {
 			t.Fatalf("created/started = %d/%d, want 1/1", len(runStore.runs), control.startCount)
-		}
-	})
-
-	t.Run("limit plus one rejected before variant expansion", func(t *testing.T) {
-		store := newMemoryStore()
-		runStore := newMemoryRunStore()
-		control := &fakeControl{}
-		handler := testRunHandler(t, store, runStore, control)
-		response := request(t, handler, http.MethodPost, "/api/runs", bodyAtLimit+" ")
-		if response.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want 400; body=%s", response.Code, response.Body.String())
-		}
-		if len(runStore.runs) != 0 || control.startCount != 0 {
-			t.Fatalf("created/started = %d/%d, want 0/0", len(runStore.runs), control.startCount)
 		}
 	})
 }
@@ -153,10 +150,11 @@ func TestStopRunNotFound(t *testing.T) {
 }
 
 type memoryRunStore struct {
-	runs      []variation.Run
-	children  map[uuid.UUID][]variation.ChildSession
-	poolIPs   map[uuid.UUID][]variation.IPRow
-	streamErr error
+	runs       []variation.Run
+	children   map[uuid.UUID][]variation.ChildSession
+	poolIPs    map[uuid.UUID][]variation.IPRow
+	streamErr  error
+	runByIDErr error
 }
 
 func newMemoryRunStore() *memoryRunStore {
@@ -191,6 +189,9 @@ func (m *memoryRunStore) Runs(context.Context) ([]variation.RunSummary, error) {
 	return out, nil
 }
 func (m *memoryRunStore) RunByID(_ context.Context, id uuid.UUID) (variation.RunSummary, error) {
+	if m.runByIDErr != nil {
+		return variation.RunSummary{}, m.runByIDErr
+	}
 	for _, r := range m.runs {
 		if r.ID == id {
 			return variation.RunSummary{Run: r, VariantCount: len(m.children[id]), Status: variation.RunRunning}, nil
@@ -268,6 +269,34 @@ func TestCreateRunRejectsOversizedTemplate(t *testing.T) {
 	resp := request(t, handler, http.MethodPost, "/api/runs", body)
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (template exceeds size cap); body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestCreateRunRejectsRangeAxisMissingEndpoints(t *testing.T) {
+	handler := testRunHandler(t, newMemoryStore(), newMemoryRunStore(), &fakeControl{})
+	body := `{"name":"r","template":"p://gate:{port}","axes":{"port":{"kind":"range"}},"mode":"sticky","cadence_seconds":30}`
+	resp := request(t, handler, http.MethodPost, "/api/runs", body)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (range axis without from/to)", resp.Code)
+	}
+}
+
+func TestCreateRunSucceedsWithoutPostStartRead(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	// A failing post-start read must not fail creation or leave a live run
+	// behind a 500 — the response is built from the already-known run.
+	runStore.runByIDErr = errors.New("transient read failure")
+	control := &fakeControl{}
+	handler := testRunHandler(t, store, runStore, control)
+
+	body := `{"name":"r","template":"socks5h://u-cc-{country}:pw@gate.example:1080","axes":{"country":{"kind":"list","values":["de","us"]}},"mode":"sticky","cadence_seconds":30}`
+	resp := request(t, handler, http.MethodPost, "/api/runs", body)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (create must not depend on a post-start read); body=%s", resp.Code, resp.Body.String())
+	}
+	if control.startCount != 2 {
+		t.Fatalf("Start calls = %d, want 2", control.startCount)
 	}
 }
 

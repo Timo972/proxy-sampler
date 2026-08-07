@@ -2,8 +2,21 @@ package variation
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestRenderRejectsOversizedOutput(t *testing.T) {
+	// A placeholder repeated many times, each substituted with a large value,
+	// must be rejected rather than allocating an enormous rendered string.
+	tmpl, err := ParseTemplate(strings.Repeat("{v}", 1000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tmpl.Render(map[string]string{"v": strings.Repeat("a", 4096)}); err == nil {
+		t.Fatal("expected error: rendered output exceeds the size cap")
+	}
+}
 
 func TestParseTemplatePlaceholders(t *testing.T) {
 	tmpl, err := ParseTemplate("socks5h://u-cc-{country}-sid-{session}:pw@gate:1080")
