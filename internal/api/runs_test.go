@@ -154,17 +154,20 @@ func TestStopRunNotFound(t *testing.T) {
 }
 
 type memoryRunStore struct {
-	runs       []variation.Run
-	children   map[uuid.UUID][]variation.ChildSession
-	poolIPs    map[uuid.UUID][]variation.IPRow
-	streamErr  error
-	runByIDErr error
+	runs                 []variation.Run
+	children             map[uuid.UUID][]variation.ChildSession
+	poolIPs              map[uuid.UUID][]variation.IPRow
+	observations         map[uuid.UUID][]variation.IPObservation
+	lastObservationLimit int
+	streamErr            error
+	runByIDErr           error
 }
 
 func newMemoryRunStore() *memoryRunStore {
 	return &memoryRunStore{
-		children: map[uuid.UUID][]variation.ChildSession{},
-		poolIPs:  map[uuid.UUID][]variation.IPRow{},
+		children:     map[uuid.UUID][]variation.ChildSession{},
+		poolIPs:      map[uuid.UUID][]variation.IPRow{},
+		observations: map[uuid.UUID][]variation.IPObservation{},
 	}
 }
 
@@ -210,8 +213,13 @@ func (m *memoryRunStore) RunSessions(_ context.Context, id uuid.UUID) ([]variati
 	}
 	return out, nil
 }
-func (m *memoryRunStore) RunIPObservations(context.Context, uuid.UUID) ([]variation.IPObservation, error) {
-	return nil, nil
+func (m *memoryRunStore) RunIPObservations(_ context.Context, id uuid.UUID, limit int) ([]variation.IPObservation, error) {
+	m.lastObservationLimit = limit
+	obs := m.observations[id]
+	if limit > 0 && len(obs) > limit {
+		obs = obs[:limit]
+	}
+	return obs, nil
 }
 func (m *memoryRunStore) DeleteRun(_ context.Context, id uuid.UUID) error {
 	delete(m.children, id)
@@ -277,6 +285,22 @@ func TestCreateRunRejectsCredentialInPasswordPosition(t *testing.T) {
 	}
 	if len(runStore.runs) != 0 {
 		t.Fatal("a run was created despite a credential-position axis")
+	}
+}
+
+func TestCreateRunRejectsCredentialInjectedViaAxisValue(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	handler := testRunHandler(t, store, runStore, &fakeControl{})
+	// {cred} sits in the username position (the raw template userinfo has no
+	// colon), but the axis value injects a password via a colon.
+	body := `{"name":"r","template":"http://{cred}@proxy.example:8080","axes":{"cred":{"kind":"list","values":["alice:s3cret"]}},"mode":"sticky","cadence_seconds":30}`
+	resp := request(t, handler, http.MethodPost, "/api/runs", body)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (axis value injects a credential)", resp.Code)
+	}
+	if len(runStore.runs) != 0 {
+		t.Fatal("a run was created despite a delimiter-bearing axis value")
 	}
 }
 

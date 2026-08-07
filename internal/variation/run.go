@@ -76,7 +76,9 @@ type Store interface {
 	Runs(ctx context.Context) ([]RunSummary, error)
 	RunByID(ctx context.Context, id uuid.UUID) (RunSummary, error)
 	RunSessions(ctx context.Context, id uuid.UUID) ([]VariantSession, error)
-	RunIPObservations(ctx context.Context, id uuid.UUID) ([]IPObservation, error)
+	// RunIPObservations returns at most limit observations (most recent first)
+	// so a report over an unbounded pool run cannot exhaust memory.
+	RunIPObservations(ctx context.Context, id uuid.UUID, limit int) ([]IPObservation, error)
 	// StreamPoolIPs visits each distinct exit IP of a run once, deduped and
 	// aggregated server-side, so a large export never holds the whole pool in
 	// memory. Rows arrive in ascending IP order.

@@ -592,12 +592,14 @@ func (s *fakeSessionStore) ReputationByIP(context.Context, netip.Addr) (session.
 func (s *fakeSessionStore) SaveReputation(context.Context, session.Reputation) error { return nil }
 
 type fakeEventSink struct {
-	mu         sync.Mutex
-	events     []ch.Event
-	operations *[]string
-	onEnqueue  func()
-	flushErr   error
-	reject     bool
+	mu           sync.Mutex
+	events       []ch.Event
+	operations   *[]string
+	onEnqueue    func()
+	flushErr     error
+	reject       bool
+	flushEntered chan struct{} // signalled (non-blocking) when Flush is entered
+	flushGate    chan struct{} // Flush blocks until this is closed, if set
 }
 
 func (s *fakeEventSink) Enqueue(event ch.Event) bool {
@@ -612,7 +614,20 @@ func (s *fakeEventSink) Enqueue(event ch.Event) bool {
 	s.events = append(s.events, event)
 	return true
 }
-func (s *fakeEventSink) Flush(context.Context) error {
+func (s *fakeEventSink) Flush(ctx context.Context) error {
+	if s.flushEntered != nil {
+		select {
+		case s.flushEntered <- struct{}{}:
+		default:
+		}
+	}
+	if s.flushGate != nil {
+		select {
+		case <-s.flushGate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if s.operations != nil {
 		*s.operations = append(*s.operations, "flush")
 	}

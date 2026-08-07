@@ -81,7 +81,8 @@ FROM session_ips AS si
 JOIN sampling_sessions AS s ON s.id = si.session_id
 LEFT JOIN ip_reputation_cache AS r ON r.ip = si.ip
 WHERE s.run_id = sqlc.arg(run_id)
-ORDER BY si.session_id, si.last_seen DESC;
+ORDER BY si.last_seen DESC
+LIMIT sqlc.arg(row_limit);
 
 -- name: DeleteRun :exec
 DELETE FROM variation_runs WHERE id = sqlc.arg(id);

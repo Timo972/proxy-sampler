@@ -4,12 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 
 	"github.com/google/uuid"
 
 	"github.com/timo972/proxy-sampler/internal/api/openapi"
 	"github.com/timo972/proxy-sampler/internal/variation"
 )
+
+// capIPRows keeps only the most-active limit IP rows in the pool report so the
+// response array stays bounded for large pools.
+func capIPRows(pool *variation.PoolReport, limit int) {
+	if len(pool.IPs) <= limit {
+		return
+	}
+	sort.Slice(pool.IPs, func(i, j int) bool { return pool.IPs[i].HitCount > pool.IPs[j].HitCount })
+	pool.IPs = pool.IPs[:limit]
+}
 
 // RunReport aggregates a run's children into a deduped pool report plus a
 // ClickHouse series across every child session.
@@ -28,11 +39,15 @@ func (s *Server) RunReport(ctx context.Context, request openapi.RunReportRequest
 	if err != nil {
 		return nil, dependencyUnavailable()
 	}
-	observations, err := s.runStore.RunIPObservations(ctx, request.Id)
+	observations, err := s.runStore.RunIPObservations(ctx, request.Id, maxReportObservations)
 	if err != nil {
 		return nil, dependencyUnavailable()
 	}
 	pool := variation.BuildPoolReport(variants, observations)
+	// Bound the IP detail array so a large pool cannot produce a huge JSON
+	// response on every poll. The aggregate stats above already cover the
+	// (capped) observation set; the details show the most-active IPs.
+	capIPRows(&pool, maxReportIPRows)
 
 	ids := make([]uuid.UUID, 0, len(variants))
 	for _, v := range variants {

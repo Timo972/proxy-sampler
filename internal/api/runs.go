@@ -462,6 +462,17 @@ func mapAxes(axes map[string]openapi.AxisSpec) (map[string]variation.AxisSpec, e
 	for name, spec := range axes {
 		domain := variation.AxisSpec{Kind: variation.AxisKind(spec.Kind)}
 		if spec.Values != nil {
+			// List values are the only free-form axis input substituted into
+			// the proxy URL. A value carrying a URL structural delimiter could
+			// inject a password (user:{v} where v="a:secret"), redirect the
+			// host (@evil), or add a path — smuggling a credential/authority
+			// past the template-level check and into plaintext metadata. Reject
+			// them. (random values are alphanumeric; range values are integers.)
+			for _, value := range *spec.Values {
+				if strings.ContainsAny(value, unsafeAxisValueChars) {
+					return nil, fmt.Errorf("list axis %q value %q contains a URL delimiter", name, value)
+				}
+			}
 			domain.Values = *spec.Values
 		}
 		// A range axis needs both endpoints. Nil pointers would otherwise

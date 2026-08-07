@@ -34,6 +34,16 @@ const (
 	// the request-body limit to keep expansion from amplifying into a large
 	// allocation. Real proxy URLs are a few hundred bytes at most.
 	maxTemplateBytes = 4096
+	// unsafeAxisValueChars are URL structural delimiters (and whitespace) that
+	// a list-axis value must not contain, since it is substituted into a proxy
+	// URL and could otherwise inject a password, host, path, or query.
+	unsafeAxisValueChars = " \t\r\n:/?#@"
+	// maxReportObservations bounds how many session_ip observations a single
+	// run report loads, so a long-running pool run whose page polls repeatedly
+	// cannot exhaust memory. maxReportIPRows bounds the IP-detail array in the
+	// response.
+	maxReportObservations = 50000
+	maxReportIPRows       = 2000
 )
 
 // Control owns the sampler worker lifecycle behind the HTTP API.

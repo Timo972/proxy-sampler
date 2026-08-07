@@ -198,8 +198,14 @@ FROM session_ips AS si
 JOIN sampling_sessions AS s ON s.id = si.session_id
 LEFT JOIN ip_reputation_cache AS r ON r.ip = si.ip
 WHERE s.run_id = $1
-ORDER BY si.session_id, si.last_seen DESC
+ORDER BY si.last_seen DESC
+LIMIT $2
 `
+
+type RunIPObservationsParams struct {
+	RunID    pgtype.UUID `json:"run_id"`
+	RowLimit int32       `json:"row_limit"`
+}
 
 type RunIPObservationsRow struct {
 	SessionID           uuid.UUID          `json:"session_id"`
@@ -230,8 +236,8 @@ type RunIPObservationsRow struct {
 	RefreshedAt         pgtype.Timestamptz `json:"refreshed_at"`
 }
 
-func (q *Queries) RunIPObservations(ctx context.Context, runID pgtype.UUID) ([]RunIPObservationsRow, error) {
-	rows, err := q.db.Query(ctx, runIPObservations, runID)
+func (q *Queries) RunIPObservations(ctx context.Context, arg RunIPObservationsParams) ([]RunIPObservationsRow, error) {
+	rows, err := q.db.Query(ctx, runIPObservations, arg.RunID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

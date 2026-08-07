@@ -118,8 +118,11 @@ func (s *Store) RunSessions(ctx context.Context, id uuid.UUID) ([]variation.Vari
 	return result, nil
 }
 
-func (s *Store) RunIPObservations(ctx context.Context, id uuid.UUID) ([]variation.IPObservation, error) {
-	rows, err := s.q.RunIPObservations(ctx, pgUUID(id))
+func (s *Store) RunIPObservations(ctx context.Context, id uuid.UUID, limit int) ([]variation.IPObservation, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.q.RunIPObservations(ctx, RunIPObservationsParams{RunID: pgUUID(id), RowLimit: int32(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("run ip observations: %w", err)
 	}

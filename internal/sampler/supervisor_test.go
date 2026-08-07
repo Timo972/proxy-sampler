@@ -367,6 +367,48 @@ func TestSupervisorDeleteSessionsBatchesFlushAndClickHouse(t *testing.T) {
 	}
 }
 
+func TestSupervisorDeleteSessionsFencesConcurrentReenable(t *testing.T) {
+	root, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := newFakeSessionStore()
+	value, cipher := encryptedSession(t, 1)
+	store.sessions[value.ID] = value
+	sink := &fakeEventSink{flushEntered: make(chan struct{}, 1), flushGate: make(chan struct{})}
+	reader := &fakeSessionReader{}
+	supervisor := NewSupervisor(root, store, sink, reader, func(session.Session) *Worker {
+		return testWorker(store, cipher, blockingProber{}, &fakeLookup{}, sink)
+	})
+	if err := supervisor.Start(context.Background(), value.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	deleteErr := make(chan error, 1)
+	go func() { deleteErr <- supervisor.DeleteSessions(context.Background(), []uuid.UUID{value.ID}) }()
+
+	// DeleteSessions has stopped the worker and is now blocked in Flush while
+	// still holding the session's operation lock.
+	<-sink.flushEntered
+
+	reenableErr := make(chan error, 1)
+	go func() { reenableErr <- supervisor.Reenable(context.Background(), value.ID) }()
+
+	// Give the Reenable a moment to contend for the (held) operation lock, then
+	// let the deletion finish.
+	time.Sleep(20 * time.Millisecond)
+	close(sink.flushGate)
+
+	if err := <-deleteErr; err != nil {
+		t.Fatalf("DeleteSessions: %v", err)
+	}
+	// The Reenable was serialized after the deletion, so it finds no row —
+	// proving no worker was started between the flush barrier and the row
+	// deletion. Without the held lock it would have re-enabled the session and
+	// left an orphan.
+	if err := <-reenableErr; !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("Reenable err = %v, want ErrNotFound (serialized after delete)", err)
+	}
+}
+
 func TestSupervisorDeletePreservesPostgresWhenClickHouseDeleteFails(t *testing.T) {
 	store := newFakeSessionStore()
 	value, _ := encryptedSession(t, 1)

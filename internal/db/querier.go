@@ -21,7 +21,7 @@ type Querier interface {
 	ReenableSession(ctx context.Context, arg ReenableSessionParams) (int64, error)
 	ReputationByIP(ctx context.Context, ip string) (ReputationByIPRow, error)
 	RunByID(ctx context.Context, id uuid.UUID) (RunByIDRow, error)
-	RunIPObservations(ctx context.Context, runID pgtype.UUID) ([]RunIPObservationsRow, error)
+	RunIPObservations(ctx context.Context, arg RunIPObservationsParams) ([]RunIPObservationsRow, error)
 	RunSessions(ctx context.Context, runID pgtype.UUID) ([]RunSessionsRow, error)
 	RunningSessions(ctx context.Context) ([]RunningSessionsRow, error)
 	Runs(ctx context.Context) ([]RunsRow, error)
