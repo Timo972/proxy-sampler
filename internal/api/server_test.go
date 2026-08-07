@@ -588,7 +588,9 @@ func sampleSession() session.Session {
 
 type fakeControl struct {
 	startErr, stopErr, reenableErr, deleteErr error
+	deleteSessionsErr                         error
 	started, stopped, reenabled, deleted      []uuid.UUID
+	deletedBatches                            [][]uuid.UUID
 	start                                     func(context.Context, uuid.UUID) error
 	reenable                                  func(context.Context, uuid.UUID) error
 	startCount, stopCount, deleteCount        int
@@ -621,6 +623,11 @@ func (f *fakeControl) Delete(_ context.Context, id uuid.UUID) error {
 	f.deleteCount++
 	f.deleted = append(f.deleted, id)
 	return f.deleteErr
+}
+
+func (f *fakeControl) DeleteSessions(_ context.Context, ids []uuid.UUID) error {
+	f.deletedBatches = append(f.deletedBatches, ids)
+	return f.deleteSessionsErr
 }
 
 type memoryStore struct {

@@ -42,6 +42,9 @@ type Control interface {
 	Stop(context.Context, uuid.UUID) error
 	Reenable(context.Context, uuid.UUID) error
 	Delete(context.Context, uuid.UUID) error
+	// DeleteSessions deletes many sessions with a single flush and ClickHouse
+	// mutation, keeping large-run deletion within the request deadline.
+	DeleteSessions(context.Context, []uuid.UUID) error
 }
 
 // Defaults supplies request values that are not mode-specific.

@@ -324,6 +324,49 @@ func TestSupervisorDeleteOrdersStopFlushCHAndPostgres(t *testing.T) {
 	}
 }
 
+func TestSupervisorDeleteSessionsBatchesFlushAndClickHouse(t *testing.T) {
+	root, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := newFakeSessionStore()
+	v1, cipher := encryptedSession(t, 1)
+	v2, _ := encryptedSession(t, 1)
+	store.sessions[v1.ID] = v1
+	store.sessions[v2.ID] = v2
+	sink := &fakeEventSink{operations: &store.operations}
+	reader := &fakeSessionReader{operations: &store.operations}
+	supervisor := NewSupervisor(root, store, sink, reader, func(session.Session) *Worker {
+		return testWorker(store, cipher, blockingProber{}, &fakeLookup{}, sink)
+	})
+	if err := supervisor.Start(context.Background(), v1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.Start(context.Background(), v2.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.DeleteSessions(context.Background(), []uuid.UUID{v1.ID, v2.ID}); err != nil {
+		t.Fatalf("DeleteSessions: %v", err)
+	}
+
+	counts := map[string]int{}
+	for _, op := range store.operations {
+		counts[op]++
+	}
+	// The whole point of batching: one flush and one ClickHouse mutation for
+	// the whole set, regardless of how many sessions are deleted.
+	if counts["flush"] != 1 {
+		t.Fatalf("flush count = %d, want 1 (batched); operations=%v", counts["flush"], store.operations)
+	}
+	if counts["ch-delete-batch"] != 1 {
+		t.Fatalf("ch-delete-batch count = %d, want 1 (batched); operations=%v", counts["ch-delete-batch"], store.operations)
+	}
+	if counts["ch-delete"] != 0 {
+		t.Fatalf("per-session ch-delete count = %d, want 0", counts["ch-delete"])
+	}
+	if counts["pg-delete"] != 2 {
+		t.Fatalf("pg-delete count = %d, want 2; operations=%v", counts["pg-delete"], store.operations)
+	}
+}
+
 func TestSupervisorDeletePreservesPostgresWhenClickHouseDeleteFails(t *testing.T) {
 	store := newFakeSessionStore()
 	value, _ := encryptedSession(t, 1)
@@ -901,6 +944,18 @@ func (r *fakeSessionReader) DeleteSession(context.Context, uuid.UUID) error {
 	}
 	if r.operations != nil {
 		*r.operations = append(*r.operations, "ch-delete")
+	}
+	return nil
+}
+
+func (r *fakeSessionReader) DeleteSessions(context.Context, []uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	if r.operations != nil {
+		*r.operations = append(*r.operations, "ch-delete-batch")
 	}
 	return nil
 }

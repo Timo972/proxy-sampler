@@ -127,14 +127,18 @@ func TestDeleteRunDeletesChildrenThenRun(t *testing.T) {
 	control := &fakeControl{}
 	handler := testRunHandler(t, store, runStore, control)
 	request(t, handler, http.MethodPost, "/api/runs",
-		`{"name":"r","template":"p://u-{c}:pw@gate.example:1080","axes":{"c":{"kind":"list","values":["de"]}},"mode":"sticky","cadence_seconds":30}`)
-	runID := runStore.runs[0].ID.String()
-	resp := request(t, handler, http.MethodDelete, "/api/runs/"+runID, "")
+		`{"name":"r","template":"p://u-{c}:pw@gate.example:1080","axes":{"c":{"kind":"list","values":["de","us"]}},"mode":"sticky","cadence_seconds":30}`)
+	runID := runStore.runs[0].ID
+	resp := request(t, handler, http.MethodDelete, "/api/runs/"+runID.String(), "")
 	if resp.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d", resp.Code)
 	}
-	if control.deleteCount != 1 {
-		t.Fatalf("Delete calls = %d, want 1", control.deleteCount)
+	// Children are deleted in a single batch, then the run row.
+	if len(control.deletedBatches) != 1 {
+		t.Fatalf("DeleteSessions calls = %d, want 1 batch", len(control.deletedBatches))
+	}
+	if got := len(control.deletedBatches[0]); got != 2 {
+		t.Fatalf("batch size = %d, want 2 children", got)
 	}
 	if len(runStore.runs) != 0 {
 		t.Fatal("run row not deleted")
@@ -259,6 +263,30 @@ func TestCreateRunRejectsMalformedJSON(t *testing.T) {
 				t.Fatalf("status = %d, want 400; body=%s", resp.Code, resp.Body.String())
 			}
 		})
+	}
+}
+
+func TestCreateRunRejectsCredentialInPasswordPosition(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	handler := testRunHandler(t, store, runStore, &fakeControl{})
+	body := `{"name":"r","template":"http://user:{password}@proxy.example:8080","axes":{"password":{"kind":"list","values":["s3cret"]}},"mode":"sticky","cadence_seconds":30}`
+	resp := request(t, handler, http.MethodPost, "/api/runs", body)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (credential placeholder in password position)", resp.Code)
+	}
+	if len(runStore.runs) != 0 {
+		t.Fatal("a run was created despite a credential-position axis")
+	}
+}
+
+func TestCreateRunAllowsTargetingPlaceholderInUsername(t *testing.T) {
+	handler := testRunHandler(t, newMemoryStore(), newMemoryRunStore(), &fakeControl{})
+	// {country} is in the username (targeting), the password 'pw' is fixed.
+	body := `{"name":"r","template":"socks5h://u-cc-{country}:pw@gate.example:1080","axes":{"country":{"kind":"list","values":["de"]}},"mode":"sticky","cadence_seconds":30}`
+	resp := request(t, handler, http.MethodPost, "/api/runs", body)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (username targeting placeholder is allowed); body=%s", resp.Code, resp.Body.String())
 	}
 }
 

@@ -278,7 +278,8 @@ func (s *fakeSupervisor) Reenable(context.Context, uuid.UUID) error {
 	s.recorder.add("reenable")
 	return nil
 }
-func (s *fakeSupervisor) Delete(context.Context, uuid.UUID) error { return nil }
+func (s *fakeSupervisor) Delete(context.Context, uuid.UUID) error           { return nil }
+func (s *fakeSupervisor) DeleteSessions(context.Context, []uuid.UUID) error { return nil }
 func (s *fakeSupervisor) Wait() {
 	if s.root.Err() == nil {
 		panic("workers were not canceled before Wait")

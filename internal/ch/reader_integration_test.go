@@ -41,6 +41,23 @@ func TestReaderRejectsHugePageBeforeQuery(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionsRemovesSamplesInOneMutation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r, sessionID, _ := integrationReaderFixture(t, ctx)
+
+	if err := r.DeleteSessions(ctx, []uuid.UUID{sessionID}); err != nil {
+		t.Fatalf("DeleteSessions: %v", err)
+	}
+	page, err := r.Samples(ctx, sessionID, nil, nil, 1)
+	if err != nil {
+		t.Fatalf("Samples: %v", err)
+	}
+	if page.Total != 0 {
+		t.Fatalf("total after batch delete = %d, want 0", page.Total)
+	}
+}
+
 func TestReaderReportsAndDeletion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

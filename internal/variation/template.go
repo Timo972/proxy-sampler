@@ -18,6 +18,11 @@ var placeholderPattern = regexp.MustCompile(`\{([^{}]*)\}`)
 // is never close to this size.
 const MaxRenderedBytes = 8192
 
+// ContainsPlaceholder reports whether s contains a {name} placeholder token.
+func ContainsPlaceholder(s string) bool {
+	return placeholderPattern.MatchString(s)
+}
+
 // Template is a proxy URL with {name} placeholders substituted at expansion.
 type Template struct {
 	raw   string

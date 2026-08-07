@@ -14,6 +14,7 @@ import (
 
 type sessionReader interface {
 	DeleteSession(context.Context, uuid.UUID) error
+	DeleteSessions(context.Context, []uuid.UUID) error
 }
 
 const (
@@ -347,6 +348,55 @@ func (s *Supervisor) Delete(ctx context.Context, id uuid.UUID) error {
 		}
 		return s.store.Delete(ctx, id)
 	})
+}
+
+// DeleteSessions deletes many sessions with the per-session flush and
+// ClickHouse mutation performed once for the whole set rather than once per
+// session. Every worker is stopped first (each under its own session-operation
+// lock), then a single flush crosses the queue barrier, a single ClickHouse
+// mutation removes all their samples, and the control rows are deleted. This
+// keeps deleting a large run within the request's write deadline. It is
+// idempotent: already-stopped or already-deleted sessions are skipped, so a
+// retry after a partial failure completes cleanly.
+func (s *Supervisor) DeleteSessions(ctx context.Context, ids []uuid.UUID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	for _, id := range ids {
+		err := s.withSessionOperation(ctx, id, func() error {
+			value, err := s.store.SessionByID(ctx, id)
+			if errors.Is(err, session.ErrNotFound) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if value.Status != session.StatusRunning {
+				return nil
+			}
+			stopCtx, cancelStop := context.WithTimeout(ctx, s.stopTimeout)
+			defer cancelStop()
+			if err := s.stopWithOwnership(stopCtx, id); err != nil && !errors.Is(err, session.ErrNotRunning) {
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	if err := s.sink.Flush(ctx); err != nil {
+		return fmt.Errorf("flush samples before delete: %w", err)
+	}
+	if err := s.reader.DeleteSessions(ctx, ids); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := s.store.Delete(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Wait blocks until every published worker and deferred recovery has exited.

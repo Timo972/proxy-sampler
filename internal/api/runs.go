@@ -47,6 +47,15 @@ func (s *Server) CreateRun(ctx context.Context, request openapi.CreateRunRequest
 	if body.Template == nil || strings.TrimSpace(*body.Template) == "" || len(*body.Template) > maxTemplateBytes {
 		return nil, invalidRequest()
 	}
+	// A placeholder in the password position would flow — in plaintext — into
+	// the child name, variant_params, cell_key, and the run's stored axes JSON,
+	// and back out through the run detail/report responses, bypassing the
+	// encryption applied to the proxy URL. Targeting belongs in the username;
+	// reject credentials as axes. (Only the proxy URL as a whole is a secret;
+	// the username's targeting tokens are intentionally surfaced.)
+	if templateHasCredentialPlaceholder(*body.Template) {
+		return nil, invalidRequest()
+	}
 
 	probes := defaultProbes(openapi.CreateSessionRequestMode(body.Mode))
 	if body.ProbesPerSample != nil {
@@ -279,10 +288,14 @@ func (s *Server) DeleteRun(ctx context.Context, request openapi.DeleteRunRequest
 	if err != nil {
 		return nil, internalError()
 	}
+	ids := make([]uuid.UUID, 0, len(variants))
 	for _, v := range variants {
-		if err := s.control.Delete(ctx, v.SessionID); err != nil && !errors.Is(err, session.ErrNotFound) {
-			return nil, internalError()
-		}
+		ids = append(ids, v.SessionID)
+	}
+	// Delete every child in one batch (single flush + single ClickHouse
+	// mutation) so a large run's deletion stays within the request deadline.
+	if err := s.control.DeleteSessions(ctx, ids); err != nil {
+		return nil, internalError()
 	}
 	if err := s.runStore.DeleteRun(ctx, request.Id); err != nil {
 		return nil, internalError()
@@ -516,6 +529,32 @@ func variantName(runName string, params map[string]string) string {
 // the userinfo section and retries Display so template_display never leaks
 // credentials or unparsed placeholder syntax; if that still fails, it falls
 // back to a fully redacted placeholder.
+// templateHasCredentialPlaceholder reports whether the template puts a {…}
+// placeholder in the password position of the userinfo (the part after the
+// first ':' and before the '@'). Such a placeholder would vary a secret and
+// leak it into stored/returned run metadata. The username position — where
+// providers encode targeting — is not treated as a credential.
+func templateHasCredentialPlaceholder(raw string) bool {
+	schemeEnd := strings.Index(raw, "://")
+	if schemeEnd == -1 {
+		return false
+	}
+	authority := raw[schemeEnd+3:]
+	if cut := strings.IndexAny(authority, "/?#"); cut != -1 {
+		authority = authority[:cut]
+	}
+	at := strings.LastIndex(authority, "@")
+	if at == -1 {
+		return false
+	}
+	userinfo := authority[:at]
+	colon := strings.Index(userinfo, ":")
+	if colon == -1 {
+		return false // no password component
+	}
+	return variation.ContainsPlaceholder(userinfo[colon+1:])
+}
+
 func redactTemplate(raw string) string {
 	schemeEnd := strings.Index(raw, "://")
 	if schemeEnd == -1 {

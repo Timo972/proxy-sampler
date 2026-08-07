@@ -325,6 +325,19 @@ func (r *Reader) DeleteSession(ctx context.Context, sessionID uuid.UUID) error {
 	return nil
 }
 
+// DeleteSessions synchronously deletes every sample belonging to any of the
+// given sessions in a single mutation, so deleting a large run does not run one
+// slow synchronous mutation per variant.
+func (r *Reader) DeleteSessions(ctx context.Context, sessionIDs []uuid.UUID) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	if err := r.conn.Exec(ctx, `ALTER TABLE sample_events DELETE WHERE session_id IN (?) SETTINGS mutations_sync = 1`, sessionIDs); err != nil {
+		return fmt.Errorf("delete clickhouse session samples: %w", err)
+	}
+	return nil
+}
+
 func optionalRange(from, to *time.Time) error {
 	if from != nil && to != nil && from.After(*to) {
 		return ErrInvalidRange

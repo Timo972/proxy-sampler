@@ -55,6 +55,7 @@ type writerResource struct {
 type clickhouseReader interface {
 	api.Reader
 	DeleteSession(context.Context, uuid.UUID) error
+	DeleteSessions(context.Context, []uuid.UUID) error
 	Close() error
 }
 
