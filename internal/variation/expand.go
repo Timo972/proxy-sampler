@@ -119,6 +119,15 @@ func plannedCount(placeholders []string, axes map[string]AxisSpec, maxVariants i
 			if spec.Length < 0 || spec.Length > MaxRandomLength {
 				return 0, fmt.Errorf("random axis %q length must be between 0 and %d", name, MaxRandomLength)
 			}
+			length := spec.Length
+			if length <= 0 {
+				length = defaultRandomLength
+			}
+			// The count must fit the distinct value space, or drawing distinct
+			// values is impossible and expansion would loop.
+			if !randomSpace(length, spec.Count) {
+				return 0, fmt.Errorf("random axis %q count %d exceeds the distinct values of length %d", name, spec.Count, length)
+			}
 			size = spec.Count
 		default:
 			return 0, fmt.Errorf("axis %q has unknown kind %q", name, spec.Kind)
@@ -196,8 +205,14 @@ func randomCartesian(names []string, axes map[string]AxisSpec, rnd RandString) (
 		}
 		var next []map[string]string
 		for _, base := range combos {
+			// Draw distinct values so two variants of the same cell can't end up
+			// byte-identical (same params, URL, cell_key and name persisted under
+			// different UUIDs). plannedCount already verified count fits the value
+			// space, so the bounded rejection loop terminates.
+			seen := make(map[string]struct{}, spec.Count)
+			maxAttempts := 32 * spec.Count
 			for i := 0; i < spec.Count; i++ {
-				value, err := rnd(length)
+				value, err := drawDistinct(rnd, length, seen, maxAttempts)
 				if err != nil {
 					return nil, err
 				}
@@ -212,6 +227,35 @@ func randomCartesian(names []string, axes map[string]AxisSpec, rnd RandString) (
 		combos = next
 	}
 	return combos, nil
+}
+
+// drawDistinct returns a random value not already in seen, retrying up to
+// maxAttempts times. It records the returned value in seen.
+func drawDistinct(rnd RandString, length int, seen map[string]struct{}, maxAttempts int) (string, error) {
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		value, err := rnd(length)
+		if err != nil {
+			return "", err
+		}
+		if _, dup := seen[value]; !dup {
+			seen[value] = struct{}{}
+			return value, nil
+		}
+	}
+	return "", fmt.Errorf("could not draw a distinct random value of length %d", length)
+}
+
+// randomSpace reports whether the alphabet raised to length covers at least
+// count distinct values, without overflowing for large lengths.
+func randomSpace(length, count int) bool {
+	space := 1
+	for i := 0; i < length; i++ {
+		space *= len(randAlphabet)
+		if space >= count {
+			return true
+		}
+	}
+	return space >= count
 }
 
 // canonicalKey serializes a cell's params as a JSON object with sorted keys

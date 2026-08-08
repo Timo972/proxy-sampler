@@ -44,6 +44,13 @@ func (s *Server) RunReport(ctx context.Context, request openapi.RunReportRequest
 		return nil, dependencyUnavailable()
 	}
 	pool := variation.BuildPoolReport(variants, observations)
+	// If the observation load hit the cap, the summary is a lower-bound sample
+	// of a larger pool. Flag it so the UI can indicate the numbers are partial
+	// (and don't contradict the uncapped distinct_ips shown on the list page).
+	truncated := len(observations) >= maxReportObservations
+	if truncated {
+		pool.PoolSizeLowerBound = true
+	}
 	// Bound the IP detail array so a large pool cannot produce a huge JSON
 	// response on every poll. The aggregate stats above already cover the
 	// (capped) observation set; the details show the most-active IPs.
@@ -63,13 +70,13 @@ func (s *Server) RunReport(ctx context.Context, request openapi.RunReportRequest
 	if err != nil {
 		return nil, dependencyUnavailable()
 	}
-	return openapi.RunReport200JSONResponse(mapRunReport(pool, mapSeries(series))), nil
+	return openapi.RunReport200JSONResponse(mapRunReport(pool, mapSeries(series), truncated)), nil
 }
 
-func mapRunReport(pool variation.PoolReport, series []openapi.SeriesPoint) openapi.RunReport {
+func mapRunReport(pool variation.PoolReport, series []openapi.SeriesPoint, truncated bool) openapi.RunReport {
 	return openapi.RunReport{
 		DistinctIps: pool.DistinctIPs, EstimatedPoolSize: pool.EstimatedPoolSize,
-		PoolSizeLowerBound: pool.PoolSizeLowerBound, HonorRate: pool.HonorRate,
+		PoolSizeLowerBound: pool.PoolSizeLowerBound, Truncated: truncated, HonorRate: pool.HonorRate,
 		Composition: openapi.PoolComposition{
 			Mobile: pool.Composition.Mobile, Residential: pool.Composition.Residential,
 			Datacenter: pool.Composition.Datacenter, Unknown: pool.Composition.Unknown,

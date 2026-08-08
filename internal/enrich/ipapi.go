@@ -32,21 +32,21 @@ func NewIPAPI(client *http.Client) *IPAPI {
 func (p *IPAPI) Name() string { return "ip-api" }
 
 func (p *IPAPI) Lookup(ctx context.Context, ip netip.Addr) (Partial, error) {
-	requestURL := p.baseURL + ip.String() + "?fields=status,country,regionName,city,isp,as,mobile,proxy,hosting"
+	requestURL := p.baseURL + ip.String() + "?fields=status,countryCode,regionName,city,isp,as,mobile,proxy,hosting"
 	body, err := providerGET(ctx, p.client, p.Name(), requestURL, nil)
 	if err != nil {
 		return Partial{}, err
 	}
 	var response struct {
-		Status     string `json:"status"`
-		Country    string `json:"country"`
-		RegionName string `json:"regionName"`
-		City       string `json:"city"`
-		ISP        string `json:"isp"`
-		ASN        string `json:"as"`
-		Mobile     *bool  `json:"mobile"`
-		Proxy      *bool  `json:"proxy"`
-		Hosting    *bool  `json:"hosting"`
+		Status      string `json:"status"`
+		CountryCode string `json:"countryCode"`
+		RegionName  string `json:"regionName"`
+		City        string `json:"city"`
+		ISP         string `json:"isp"`
+		ASN         string `json:"as"`
+		Mobile      *bool  `json:"mobile"`
+		Proxy       *bool  `json:"proxy"`
+		Hosting     *bool  `json:"hosting"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return Partial{}, fmt.Errorf("%s: decode response: %w", p.Name(), err)
@@ -54,8 +54,11 @@ func (p *IPAPI) Lookup(ctx context.Context, ip netip.Addr) (Partial, error) {
 	if response.Status != "success" {
 		return Partial{}, fmt.Errorf("%s: provider status %q", p.Name(), response.Status)
 	}
+	// Store the ISO 3166-1 alpha-2 code (e.g. "DE"), not the full English name,
+	// so it can be compared against the ISO codes proxy providers use as
+	// country targeting tokens (the run report's honor rate).
 	return Partial{
-		Country: response.Country, Region: response.RegionName, City: response.City,
+		Country: response.CountryCode, Region: response.RegionName, City: response.City,
 		ISP: response.ISP, ASN: response.ASN, IsMobile: response.Mobile,
 		IPAPIProxy: response.Proxy, IPAPIHosting: response.Hosting,
 		Raw: map[string]json.RawMessage{p.Name(): body}, HadSignal: true,

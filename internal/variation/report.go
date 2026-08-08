@@ -276,7 +276,7 @@ func variantHonor(params json.RawMessage, obs []IPObservation) honorOutcome {
 		switch {
 		case observed == "":
 			complete = false
-		case !strings.EqualFold(observed, isp):
+		case !ispMatches(isp, observed):
 			return honorMismatch
 		}
 	}
@@ -284,6 +284,19 @@ func variantHonor(params json.RawMessage, obs []IPObservation) honorOutcome {
 		return honorUnknown
 	}
 	return honorMatch
+}
+
+// ispMatches compares a requested ISP axis token against an observed ISP name
+// tolerantly: providers use short tokens ("telekom") while reputation gives the
+// full registered name ("Deutsche Telekom AG"), so an exact match is too
+// strict. A case-insensitive substring match in either direction is used.
+func ispMatches(requested, observed string) bool {
+	r := strings.ToLower(strings.TrimSpace(requested))
+	o := strings.ToLower(strings.TrimSpace(observed))
+	if r == "" || o == "" {
+		return false
+	}
+	return strings.Contains(o, r) || strings.Contains(r, o)
 }
 
 func dominant(obs []IPObservation, pick func(*session.Reputation) string) string {
@@ -353,7 +366,7 @@ func sortedIPs(ips map[netip.Addr]*ipAccum) []*ipAccum {
 	for k := range ips {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
+	sort.Slice(keys, func(i, j int) bool { return keys[i].Compare(keys[j]) < 0 })
 	out := make([]*ipAccum, 0, len(keys))
 	for _, k := range keys {
 		out = append(out, ips[k])

@@ -367,9 +367,18 @@ func (s *Supervisor) DeleteSessions(ctx context.Context, ids []uuid.UUID) error 
 	}
 	// Acquire every lock in a stable (sorted) order so overlapping deletions
 	// cannot deadlock. Single-session operations only ever hold one lock, so
-	// they always make progress and release for this batch.
+	// they always make progress and release for this batch. De-duplicate first:
+	// a repeated id would nest withSessionOperation on itself and deadlock
+	// against its own in-flight operation.
 	ordered := append([]uuid.UUID(nil), ids...)
 	sort.Slice(ordered, func(i, j int) bool { return bytes.Compare(ordered[i][:], ordered[j][:]) < 0 })
+	deduped := ordered[:0]
+	for i, id := range ordered {
+		if i == 0 || id != ordered[i-1] {
+			deduped = append(deduped, id)
+		}
+	}
+	ordered = deduped
 
 	return s.withOperations(ctx, ordered, func() error {
 		for _, id := range ordered {

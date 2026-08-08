@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,23 @@ import (
 	"github.com/timo972/proxy-sampler/internal/session"
 	"github.com/timo972/proxy-sampler/internal/variation"
 )
+
+func TestRunCSVStreamResponseAbortsOnMidStreamError(t *testing.T) {
+	reader, writer := io.Pipe()
+	go func() {
+		_, _ = writer.Write([]byte("ip,category\n"))
+		_ = writer.CloseWithError(errors.New("store failed mid-stream"))
+	}()
+	response := runCSVStreamResponse{body: reader, contentDisposition: `attachment; filename="x.csv"`}
+
+	defer func() {
+		if r := recover(); r != http.ErrAbortHandler {
+			t.Fatalf("recover = %v, want http.ErrAbortHandler (abort the truncated stream)", r)
+		}
+	}()
+	_ = response.VisitExportRunCSVResponse(httptest.NewRecorder())
+	t.Fatal("expected the visitor to panic(http.ErrAbortHandler) on a mid-stream error")
+}
 
 func TestCreateRunExpandsVariants(t *testing.T) {
 	store := newMemoryStore()
@@ -311,6 +330,55 @@ func TestCreateRunAllowsTargetingPlaceholderInUsername(t *testing.T) {
 	resp := request(t, handler, http.MethodPost, "/api/runs", body)
 	if resp.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (username targeting placeholder is allowed); body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestCreateRunRejectsCredentialReconstructedViaEmptyAxis(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	handler := testRunHandler(t, store, runStore, &fakeControl{})
+	// The raw template has no "://", so the old raw-string guard missed it, but
+	// an empty {x} reconstructs "//" and puts {pw}'s value in the password.
+	body := `{"name":"r","template":"socks5:/{x}/user:{pw}@host:1080","axes":{"x":{"kind":"list","values":[""]},"pw":{"kind":"list","values":["s3cr3t"]}},"mode":"sticky","cadence_seconds":30}`
+	resp := request(t, handler, http.MethodPost, "/api/runs", body)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (credential reconstructed into password); body=%s", resp.Code, resp.Body.String())
+	}
+	if len(runStore.runs) != 0 {
+		t.Fatal("a run was created despite a credential in the rendered password")
+	}
+}
+
+func TestCreateRunTolerantOfBenignStartTransition(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	// A concurrent Stop/Delete makes Start return ErrNotRunning — a benign race,
+	// not a reason to roll back the whole run the user just created.
+	control := &fakeControl{start: func(context.Context, uuid.UUID) error { return session.ErrNotRunning }}
+	handler := testRunHandler(t, store, runStore, control)
+	body := `{"name":"r","template":"socks5h://u-cc-{country}:pw@gate.example:1080","axes":{"country":{"kind":"list","values":["de","us"]}},"mode":"sticky","cadence_seconds":30}`
+	resp := request(t, handler, http.MethodPost, "/api/runs", body)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (benign concurrent transition); body=%s", resp.Code, resp.Body.String())
+	}
+	if len(runStore.runs) != 1 {
+		t.Fatal("run was rolled back on a benign Start transition")
+	}
+}
+
+func TestStopRunNilControlReturnsStructuredError(t *testing.T) {
+	cipher, err := cryptox.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(newMemoryStore(), nil, cipher, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}, newMemoryRunStore(), 128)
+	handler := server.Handler()
+	resp := request(t, handler, http.MethodPost, "/api/runs/"+uuid.NewString()+"/stop", "")
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.Code)
+	}
+	if !strings.Contains(resp.Body.String(), "internal_error") {
+		t.Fatalf("body = %s, want structured internal_error (no panic)", resp.Body.String())
 	}
 }
 

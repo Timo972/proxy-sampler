@@ -359,6 +359,7 @@ export interface RunReport {
   distinct_ips: number
   estimated_pool_size: number
   pool_size_lower_bound: boolean
+  truncated: boolean
   honor_rate?: number | null
   composition: PoolComposition
   risk_histogram: RiskBucket[]
@@ -454,6 +455,13 @@ export function useDeleteRun() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api<void>(`/api/runs/${id}`, { method: 'DELETE' }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['runs'] }),
+    onSuccess: async (_data, id) => {
+      // Remove the detail queries for the deleted run rather than invalidating,
+      // so the still-mounted RunPage doesn't refetch and flash a 404/NotFound
+      // before it navigates away.
+      queryClient.removeQueries({ queryKey: ['runs', id] })
+      queryClient.removeQueries({ queryKey: ['run-report', id] })
+      await queryClient.invalidateQueries({ queryKey: ['runs'], exact: true })
+    },
   })
 }

@@ -15,16 +15,29 @@ export function HomePage({ onNewSession, onNewRun }: { onNewSession: () => void;
   const stop = useStopSession()
   const runs = useRuns()
 
+  // The runs and sessions sections load independently — a sessions failure must
+  // not hide the runs UI (including the only "New run" button), and vice versa.
+  return (
+    <main className="home-page">
+      <RunsSection runs={runs} onNewRun={onNewRun} />
+      <SessionsSection sessions={sessions} stop={stop} onNewSession={onNewSession} />
+    </main>
+  )
+}
+
+function SessionsSection({ sessions, stop, onNewSession }: {
+  sessions: ReturnType<typeof useSessions>
+  stop: ReturnType<typeof useStopSession>
+  onNewSession: () => void
+}) {
   if (sessions.isPending) return <SessionSkeleton />
   if (sessions.isError) {
     return (
-      <main className="home-page">
-        <Alert className="error-state">
-          <AlertTriangle aria-hidden="true" size={18} />
-          <div><strong>Sessions are unavailable</strong><p>{sessions.error.message}</p></div>
-          <Button type="button" variant="secondary" onClick={() => sessions.refetch()}><RotateCw aria-hidden="true" size={15} /> Retry</Button>
-        </Alert>
-      </main>
+      <Alert className="error-state">
+        <AlertTriangle aria-hidden="true" size={18} />
+        <div><strong>Sessions are unavailable</strong><p>{sessions.error.message}</p></div>
+        <Button type="button" variant="secondary" onClick={() => sessions.refetch()}><RotateCw aria-hidden="true" size={15} /> Retry</Button>
+      </Alert>
     )
   }
 
@@ -33,14 +46,13 @@ export function HomePage({ onNewSession, onNewRun }: { onNewSession: () => void;
   const stoppingID = stop.isPending ? stop.variables : undefined
 
   return (
-    <main className="home-page">
+    <>
       {stop.isError && (
         <Alert className="inline-alert">
           <AlertTriangle aria-hidden="true" size={18} />
           <div><strong>Session could not be stopped</strong><p>{stop.error.message}</p></div>
         </Alert>
       )}
-      <RunsSection runs={runs} onNewRun={onNewRun} />
       {sessions.data.length === 0 ? (
         <section className="empty-state" aria-labelledby="empty-heading">
           <h1 id="empty-heading">Start your first sampling session</h1>
@@ -54,7 +66,7 @@ export function HomePage({ onNewSession, onNewRun }: { onNewSession: () => void;
           <SessionTable id="inactive-sessions" title="Stopped / Finished sessions" emptyMessage="Stopped and finished sessions will appear here." sessions={inactive} stoppingID={stoppingID} onStop={(session) => stop.mutate(session.id)} />
         </div>
       )}
-    </main>
+    </>
   )
 }
 
@@ -111,7 +123,7 @@ function RunsSection({ runs, onNewRun }: { runs: ReturnType<typeof useRuns>; onN
 
 function SessionSkeleton() {
   return (
-    <main className="home-page" role="status" aria-label="Loading sessions">
+    <div role="status" aria-label="Loading sessions">
       <span className="sr-only">Loading sessions</span>
       <div className="skeleton-heading"><Skeleton /><Skeleton /></div>
       <div className="skeleton-list">
@@ -121,6 +133,6 @@ function SessionSkeleton() {
           </div>
         ))}
       </div>
-    </main>
+    </div>
   )
 }

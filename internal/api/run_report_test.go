@@ -117,6 +117,39 @@ func TestRunReportBoundsObservationsAndIPDetails(t *testing.T) {
 	}
 }
 
+func TestRunReportFlagsTruncatedWhenObservationCapHit(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	handler := testRunHandlerWithReader(t, store, runStore, &fakeControl{}, stubReader{})
+	request(t, handler, http.MethodPost, "/api/runs",
+		`{"name":"pool","template":"p://u-{c}:pw@gate.example:1080","axes":{"c":{"kind":"list","values":["de"]}},"mode":"pool","cadence_seconds":30}`)
+	runID := runStore.runs[0].ID
+	childID := runStore.children[runID][0].Session.ID
+
+	// Exactly the cap's worth of observations means the load was truncated.
+	shared := netip.MustParseAddr("10.0.0.1")
+	obs := make([]variation.IPObservation, maxReportObservations)
+	for i := range obs {
+		obs[i] = variation.IPObservation{SessionID: childID, IP: shared, HitCount: 1, Reputation: &session.Reputation{Country: "DE", Category: "residential"}}
+	}
+	runStore.observations[runID] = obs
+
+	resp := request(t, handler, http.MethodGet, "/api/runs/"+runID.String()+"/report", "")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	var body struct {
+		Truncated          bool `json:"truncated"`
+		PoolSizeLowerBound bool `json:"pool_size_lower_bound"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Truncated || !body.PoolSizeLowerBound {
+		t.Fatalf("truncated=%v lowerBound=%v, want both true", body.Truncated, body.PoolSizeLowerBound)
+	}
+}
+
 func TestRunReportNotFound(t *testing.T) {
 	handler := testRunHandlerWithReader(t, newMemoryStore(), newMemoryRunStore(), &fakeControl{}, stubReader{})
 	resp := request(t, handler, http.MethodGet, "/api/runs/"+uuid.NewString()+"/report", "")

@@ -102,6 +102,36 @@ func TestExpandEnforcesCap(t *testing.T) {
 	}
 }
 
+func TestExpandRandomValuesAreDistinctWithinCell(t *testing.T) {
+	tmpl, _ := ParseTemplate("p://u-{s}@gate:1080")
+	// crypto/rand-backed generator; count near the length-2 space still yields
+	// distinct values per cell.
+	axes := map[string]AxisSpec{"s": {Kind: AxisRandom, Count: 30, Length: 2}}
+	variants, err := Expand(tmpl, axes, DefaultRandString, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]struct{}{}
+	for _, v := range variants {
+		if _, dup := seen[v.URL]; dup {
+			t.Fatalf("duplicate variant URL: %q", v.URL)
+		}
+		seen[v.URL] = struct{}{}
+	}
+	if len(seen) != 30 {
+		t.Fatalf("distinct variants = %d, want 30", len(seen))
+	}
+}
+
+func TestExpandRejectsRandomCountExceedingValueSpace(t *testing.T) {
+	tmpl, _ := ParseTemplate("p://u-{s}@gate:1080")
+	// length 1 over a 36-char alphabet has only 36 distinct values.
+	axes := map[string]AxisSpec{"s": {Kind: AxisRandom, Count: 100, Length: 1}}
+	if _, err := Expand(tmpl, axes, DefaultRandString, 128); err == nil {
+		t.Fatal("expected error: count exceeds the length-1 value space")
+	}
+}
+
 func TestExpandRejectsHugeRandomLength(t *testing.T) {
 	tmpl, _ := ParseTemplate("p://u-{s}@gate:1080")
 	axes := map[string]AxisSpec{"s": {Kind: AxisRandom, Count: 1, Length: MaxRandomLength + 1}}

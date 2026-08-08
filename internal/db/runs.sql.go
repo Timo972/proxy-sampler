@@ -290,7 +290,7 @@ SELECT
   s.samples_taken, s.probes_ok, s.probes_total, s.distinct_ips
 FROM sampling_sessions AS s
 WHERE s.run_id = $1
-ORDER BY s.created_at ASC
+ORDER BY s.created_at ASC, s.id ASC
 `
 
 type RunSessionsRow struct {
@@ -401,7 +401,7 @@ const sessionsByRun = `-- name: SessionsByRun :many
 SELECT s.id
 FROM sampling_sessions AS s
 WHERE s.run_id = $1
-ORDER BY s.created_at ASC
+ORDER BY s.created_at ASC, s.id ASC
 `
 
 func (q *Queries) SessionsByRun(ctx context.Context, runID pgtype.UUID) ([]uuid.UUID, error) {

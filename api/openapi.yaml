@@ -655,12 +655,13 @@ components:
         composition: {$ref: '#/components/schemas/PoolComposition'}
     RunReport:
       type: object
-      required: [distinct_ips, estimated_pool_size, pool_size_lower_bound, composition,
+      required: [distinct_ips, estimated_pool_size, pool_size_lower_bound, truncated, composition,
         risk_histogram, flagged_ips, flagged_percent, dnsbl_hit_ips, series, cells, ips]
       properties:
         distinct_ips: {type: integer, minimum: 0}
         estimated_pool_size: {type: integer, minimum: 0}
         pool_size_lower_bound: {type: boolean}
+        truncated: {type: boolean, description: The summary is computed from a capped sample of the most recent observations; distinct_ips and estimated_pool_size are lower bounds.}
         honor_rate: {type: number, format: double, nullable: true, minimum: 0, maximum: 1}
         composition: {$ref: '#/components/schemas/PoolComposition'}
         risk_histogram:

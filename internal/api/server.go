@@ -37,7 +37,7 @@ const (
 	// unsafeAxisValueChars are URL structural delimiters (and whitespace) that
 	// a list-axis value must not contain, since it is substituted into a proxy
 	// URL and could otherwise inject a password, host, path, or query.
-	unsafeAxisValueChars = " \t\r\n:/?#@"
+	unsafeAxisValueChars = " \t\r\n:/?#@%"
 	// maxReportObservations bounds how many session_ip observations a single
 	// run report loads, so a long-running pool run whose page polls repeatedly
 	// cannot exhaust memory. maxReportIPRows bounds the IP-detail array in the

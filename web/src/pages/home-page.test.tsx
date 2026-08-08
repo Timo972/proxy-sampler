@@ -202,6 +202,21 @@ describe('HomePage', () => {
     expect(sessionsCalls).toBe(2)
   })
 
+  it('keeps the runs UI usable when the sessions query fails', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith('/api/runs')) return jsonResponse([])
+      return errorResponse(503, 'dependency_unavailable', 'Dependency unavailable')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderHome()
+
+    // The sessions failure is surfaced, but the runs section — including the
+    // only "New run" button — stays reachable.
+    expect(await screen.findByText('Sessions are unavailable')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Parameter-variation runs' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New run' })).toBeInTheDocument()
+  })
+
   it('polls every five seconds only for visible running sessions and cleans up', async () => {
     vi.useFakeTimers()
     const add = vi.spyOn(document, 'addEventListener')

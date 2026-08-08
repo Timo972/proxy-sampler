@@ -16,12 +16,12 @@ var providerTestIP = netip.MustParseAddr("203.0.113.7")
 
 func TestIPAPILookupParsesPayloadAndBuildsRequest(t *testing.T) {
 	t.Parallel()
-	payload := `{"status":"success","country":"United States","regionName":"Virginia","city":"Ashburn","isp":"HostRush","as":"AS62633 HostRush","mobile":false,"proxy":false,"hosting":false}`
+	payload := `{"status":"success","countryCode":"US","regionName":"Virginia","city":"Ashburn","isp":"HostRush","as":"AS62633 HostRush","mobile":false,"proxy":false,"hosting":false}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/json/203.0.113.7" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		if got, want := r.URL.Query().Get("fields"), "status,country,regionName,city,isp,as,mobile,proxy,hosting"; got != want {
+		if got, want := r.URL.Query().Get("fields"), "status,countryCode,regionName,city,isp,as,mobile,proxy,hosting"; got != want {
 			t.Errorf("fields = %q, want %q", got, want)
 		}
 		_, _ = w.Write([]byte(payload))
@@ -34,7 +34,8 @@ func TestIPAPILookupParsesPayloadAndBuildsRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if partial.Country != "United States" || partial.Region != "Virginia" || partial.City != "Ashburn" || partial.ISP != "HostRush" || partial.ASN != "AS62633 HostRush" {
+	// Country stores the ISO code so it can be matched against provider targeting.
+	if partial.Country != "US" || partial.Region != "Virginia" || partial.City != "Ashburn" || partial.ISP != "HostRush" || partial.ASN != "AS62633 HostRush" {
 		t.Fatalf("unexpected location/network fields: %#v", partial)
 	}
 	assertBoolPointer(t, "IsMobile", partial.IsMobile, false)

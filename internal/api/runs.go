@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,15 +46,6 @@ func (s *Server) CreateRun(ctx context.Context, request openapi.CreateRunRequest
 	// under the variant cap. A proxy URL is small; cap the template well below
 	// the request-body limit to bound the amplification.
 	if body.Template == nil || strings.TrimSpace(*body.Template) == "" || len(*body.Template) > maxTemplateBytes {
-		return nil, invalidRequest()
-	}
-	// A placeholder in the password position would flow — in plaintext — into
-	// the child name, variant_params, cell_key, and the run's stored axes JSON,
-	// and back out through the run detail/report responses, bypassing the
-	// encryption applied to the proxy URL. Targeting belongs in the username;
-	// reject credentials as axes. (Only the proxy URL as a whole is a secret;
-	// the username's targeting tokens are intentionally surfaced.)
-	if templateHasCredentialPlaceholder(*body.Template) {
 		return nil, invalidRequest()
 	}
 
@@ -124,6 +116,14 @@ func (s *Server) CreateRun(ctx context.Context, request openapi.CreateRunRequest
 
 	children := make([]variation.ChildSession, 0, len(variants))
 	for _, variant := range variants {
+		// Validate the RENDERED URL, not the raw template: a value substituted
+		// into the password position (whether the template shows it or an empty
+		// axis value reconstructs "//" around it) would persist the credential
+		// in plaintext metadata. Reject any variant whose rendered userinfo
+		// password contains a substituted axis value.
+		if credentialInPassword(variant.URL, variant.Params) {
+			return nil, invalidRequest()
+		}
 		variantDisplay, err := proxydial.Display(variant.URL)
 		if err != nil {
 			return nil, invalidRequest()
@@ -151,13 +151,16 @@ func (s *Server) CreateRun(ctx context.Context, request openapi.CreateRunRequest
 		return nil, internalError()
 	}
 
-	// Every child shares one proxy template, so a Start failure (e.g. an
+	// Every child shares one proxy template, so a real Start failure (e.g. an
 	// unsupported scheme, an unreachable gateway) is systemic rather than
 	// per-variant. Roll the whole run back instead of returning a 201 for a
-	// run with dead or missing variants.
+	// run with dead or missing variants. But ErrNotRunning/ErrNotFound mean a
+	// concurrent Stop/Delete already transitioned this child — a benign race,
+	// not a reason to destroy the whole run the user just created.
 	var startErr error
 	for _, child := range children {
-		if err := s.control.Start(ctx, child.Session.ID); err != nil {
+		if err := s.control.Start(ctx, child.Session.ID); err != nil &&
+			!errors.Is(err, session.ErrNotRunning) && !errors.Is(err, session.ErrNotFound) {
 			startErr = err
 			break
 		}
@@ -251,10 +254,16 @@ func (s *Server) RunByID(ctx context.Context, request openapi.RunByIDRequestObje
 // StopRun stops every running child of a run. Children already stopped are
 // skipped; the refreshed run summary is returned.
 func (s *Server) StopRun(ctx context.Context, request openapi.StopRunRequestObject) (openapi.StopRunResponseObject, error) {
+	if s.control == nil {
+		return nil, internalError()
+	}
 	if err := s.fanOut(ctx, request.Id, s.control.Stop, session.ErrNotRunning); err != nil {
 		return nil, err
 	}
 	summary, err := s.runStore.RunByID(ctx, request.Id)
+	if errors.Is(err, variation.ErrRunNotFound) {
+		return nil, notFound()
+	}
 	if err != nil {
 		return nil, internalError()
 	}
@@ -263,10 +272,16 @@ func (s *Server) StopRun(ctx context.Context, request openapi.StopRunRequestObje
 
 // ReenableRun re-enables every stopped/finished child of a run.
 func (s *Server) ReenableRun(ctx context.Context, request openapi.ReenableRunRequestObject) (openapi.ReenableRunResponseObject, error) {
+	if s.control == nil {
+		return nil, internalError()
+	}
 	if err := s.fanOut(ctx, request.Id, s.control.Reenable, session.ErrAlreadyRunning); err != nil {
 		return nil, err
 	}
 	summary, err := s.runStore.RunByID(ctx, request.Id)
+	if errors.Is(err, variation.ErrRunNotFound) {
+		return nil, notFound()
+	}
 	if err != nil {
 		return nil, internalError()
 	}
@@ -419,11 +434,28 @@ func writeRunIPRow(writer *csv.Writer, row variation.IPRow) error {
 	if row.RiskScore != nil {
 		risk = strconv.Itoa(*row.RiskScore)
 	}
+	// Guard the free-form reputation strings (country/isp/asn/greynoise/dnsbl),
+	// which come from third-party providers, against spreadsheet formula
+	// injection when the CSV is opened in Excel/Sheets.
 	return writer.Write([]string{
-		row.IP, row.Category, row.Country, row.ISP, row.ASN, risk, row.GreyNoiseClass,
-		strconv.FormatBool(row.DNSBLListed), strings.Join(row.DNSBLHits, "|"),
+		row.IP, row.Category, csvFormulaSafe(row.Country), csvFormulaSafe(row.ISP), csvFormulaSafe(row.ASN),
+		risk, csvFormulaSafe(row.GreyNoiseClass),
+		strconv.FormatBool(row.DNSBLListed), csvFormulaSafe(strings.Join(row.DNSBLHits, "|")),
 		strconv.FormatInt(row.HitCount, 10),
 	})
+}
+
+// csvFormulaSafe neutralizes a value that a spreadsheet would interpret as a
+// formula by prefixing a leading =, +, -, @ (or tab/CR) with a single quote.
+func csvFormulaSafe(value string) string {
+	if value == "" {
+		return value
+	}
+	switch value[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + value
+	}
+	return value
 }
 
 type runCSVStreamResponse struct {
@@ -448,9 +480,14 @@ func (response runCSVStreamResponse) VisitExportRunCSVResponse(w http.ResponseWr
 			}
 		}
 		if readErr != nil {
-			// Headers/rows already sent: end the truncated stream rather than
-			// appending a JSON error to an otherwise valid CSV prefix.
-			return nil
+			if readErr == io.EOF {
+				return nil // clean end of stream
+			}
+			// A mid-stream store failure closed the pipe with an error. Headers
+			// (200) and some rows were already sent, so we cannot switch to a
+			// structured error — abort the connection instead so the client
+			// sees an incomplete transfer rather than a valid-looking CSV.
+			panic(http.ErrAbortHandler)
 		}
 	}
 }
@@ -533,6 +570,29 @@ func variantName(runName string, params map[string]string) string {
 	return runName + " (" + strings.Join(parts, ",") + ")"
 }
 
+// credentialInPassword reports whether a substituted axis value landed in the
+// password position of a rendered variant URL. It parses the actual rendered
+// URL (so a template that reconstructs "//" from an empty axis value cannot
+// hide the credential position) and checks whether any non-empty param value
+// appears in the userinfo password — meaning a targeting axis is varying a
+// secret that would then be stored/returned in plaintext.
+func credentialInPassword(rawURL string, params map[string]string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.User == nil {
+		return false
+	}
+	password, ok := u.User.Password()
+	if !ok || password == "" {
+		return false
+	}
+	for _, value := range params {
+		if value != "" && strings.Contains(password, value) {
+			return true
+		}
+	}
+	return false
+}
+
 // redactTemplate is a fallback display value for templates proxydial.Display
 // cannot parse directly — most commonly a placeholder inside the userinfo
 // section (e.g. "u-cc-{country}:pw@host:port"), which net/url rejects
@@ -540,32 +600,6 @@ func variantName(runName string, params map[string]string) string {
 // the userinfo section and retries Display so template_display never leaks
 // credentials or unparsed placeholder syntax; if that still fails, it falls
 // back to a fully redacted placeholder.
-// templateHasCredentialPlaceholder reports whether the template puts a {…}
-// placeholder in the password position of the userinfo (the part after the
-// first ':' and before the '@'). Such a placeholder would vary a secret and
-// leak it into stored/returned run metadata. The username position — where
-// providers encode targeting — is not treated as a credential.
-func templateHasCredentialPlaceholder(raw string) bool {
-	schemeEnd := strings.Index(raw, "://")
-	if schemeEnd == -1 {
-		return false
-	}
-	authority := raw[schemeEnd+3:]
-	if cut := strings.IndexAny(authority, "/?#"); cut != -1 {
-		authority = authority[:cut]
-	}
-	at := strings.LastIndex(authority, "@")
-	if at == -1 {
-		return false
-	}
-	userinfo := authority[:at]
-	colon := strings.Index(userinfo, ":")
-	if colon == -1 {
-		return false // no password component
-	}
-	return variation.ContainsPlaceholder(userinfo[colon+1:])
-}
-
 func redactTemplate(raw string) string {
 	schemeEnd := strings.Index(raw, "://")
 	if schemeEnd == -1 {

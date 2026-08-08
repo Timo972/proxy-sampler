@@ -130,6 +130,19 @@ func TestBuildPoolReportCellParamsExcludeRandomValues(t *testing.T) {
 	}
 }
 
+func TestBuildPoolReportHonorISPTolerantMatch(t *testing.T) {
+	s1 := uuid.New()
+	// Provider ISP token is short; reputation gives the full registered name.
+	variants := []VariantSession{
+		{SessionID: s1, CellKey: `{"isp":"telekom"}`, Params: json.RawMessage(`{"isp":"telekom"}`), Snapshot: session.Snapshot{SamplesTaken: 2}},
+	}
+	obs := []IPObservation{{SessionID: s1, IP: netip.MustParseAddr("5.1.1.1"), HitCount: 3, Reputation: rep("DE", "Deutsche Telekom AG", "residential")}}
+	report := BuildPoolReport(variants, obs)
+	if report.HonorRate == nil || *report.HonorRate != 1 {
+		t.Fatalf("honor rate = %v, want 1 (isp token 'telekom' matches 'Deutsche Telekom AG')", report.HonorRate)
+	}
+}
+
 func TestBuildPoolReportHonorUnknownWhenNoTarget(t *testing.T) {
 	s1 := uuid.New()
 	// A random/port-only variant targets no country or ISP, so its honor

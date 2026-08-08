@@ -61,13 +61,13 @@ SELECT
   s.samples_taken, s.probes_ok, s.probes_total, s.distinct_ips
 FROM sampling_sessions AS s
 WHERE s.run_id = sqlc.arg(run_id)
-ORDER BY s.created_at ASC;
+ORDER BY s.created_at ASC, s.id ASC;
 
 -- name: SessionsByRun :many
 SELECT s.id
 FROM sampling_sessions AS s
 WHERE s.run_id = sqlc.arg(run_id)
-ORDER BY s.created_at ASC;
+ORDER BY s.created_at ASC, s.id ASC;
 
 -- name: RunIPObservations :many
 SELECT
