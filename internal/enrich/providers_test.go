@@ -78,6 +78,45 @@ func TestProxyCheckLookupParsesPayloadAndBuildsRequest(t *testing.T) {
 	}
 }
 
+func TestProxyCheckLookupAcceptsNumericRisk(t *testing.T) {
+	t.Parallel()
+	// Production returns risk as a JSON number, not a quoted string.
+	payload := `{"status":"ok","203.0.113.7":{"type":"Wireless","proxy":"yes","risk":73}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := NewProxyCheck(server.Client())
+	provider.baseURL = server.URL + "/v2/"
+	partial, err := provider.Lookup(context.Background(), providerTestIP)
+	if err != nil {
+		t.Fatalf("Lookup with numeric risk: %v", err)
+	}
+	assertIntPointer(t, "RiskScore", partial.RiskScore, 73)
+}
+
+func TestGreyNoiseTreats404AsBenign(t *testing.T) {
+	t.Parallel()
+	// GreyNoise community returns 404 for an IP it has not observed.
+	body := `{"ip":"203.0.113.7","noise":false,"riot":false,"message":"IP not observed scanning the internet."}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := NewGreyNoise(server.Client())
+	provider.baseURL = server.URL + "/v3/community/"
+	partial, err := provider.Lookup(context.Background(), providerTestIP)
+	if err != nil {
+		t.Fatalf("404 should be benign, got error: %v", err)
+	}
+	if partial.HadSignal || partial.GreyNoiseClass != "" {
+		t.Fatalf("partial = %#v, want empty no-signal", partial)
+	}
+}
+
 func TestGreyNoiseLookupParsesPayloadAndBuildsRequest(t *testing.T) {
 	t.Parallel()
 	payload := `{"ip":"203.0.113.7","noise":true,"riot":false,"classification":"malicious"}`

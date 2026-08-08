@@ -91,10 +91,7 @@ func providerGET(ctx context.Context, client *http.Client, provider, requestURL 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		excerpt, _ := io.ReadAll(io.LimitReader(response.Body, maxHTTPErrorExcerpt))
 		cleaned := strings.TrimSpace(string(excerpt))
-		if cleaned == "" {
-			return nil, fmt.Errorf("%s: HTTP status %d", provider, response.StatusCode)
-		}
-		return nil, fmt.Errorf("%s: HTTP status %d: %s", provider, response.StatusCode, strconv.QuoteToASCII(cleaned))
+		return nil, &providerHTTPError{provider: provider, statusCode: response.StatusCode, body: cleaned}
 	}
 
 	limited := io.LimitReader(response.Body, maxProviderBody+1)
@@ -116,3 +113,19 @@ type providerRequestError struct {
 func (e *providerRequestError) Error() string { return e.provider + ": request failed" }
 
 func (e *providerRequestError) Unwrap() error { return e.cause }
+
+// providerHTTPError is a non-2xx provider response. It carries the status code
+// so callers can treat specific statuses as benign (e.g. GreyNoise 404 for an
+// IP it has not observed).
+type providerHTTPError struct {
+	provider   string
+	statusCode int
+	body       string
+}
+
+func (e *providerHTTPError) Error() string {
+	if e.body == "" {
+		return fmt.Sprintf("%s: HTTP status %d", e.provider, e.statusCode)
+	}
+	return fmt.Sprintf("%s: HTTP status %d: %s", e.provider, e.statusCode, strconv.QuoteToASCII(e.body))
+}
