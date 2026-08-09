@@ -21,6 +21,7 @@ import (
 	cryptox "github.com/timo972/proxy-sampler/internal/crypto"
 	"github.com/timo972/proxy-sampler/internal/proxydial"
 	"github.com/timo972/proxy-sampler/internal/session"
+	"github.com/timo972/proxy-sampler/internal/variation"
 )
 
 const (
@@ -28,6 +29,21 @@ const (
 	defaultDialTimeout        = 10 * time.Second
 	maxCreateSessionBodyBytes = 1 << 20
 	maxPersistedInteger       = 2147483647
+	// maxTemplateBytes bounds a run's proxy-URL template. The template is
+	// rendered (and encrypted) once per variant, so it must be far smaller than
+	// the request-body limit to keep expansion from amplifying into a large
+	// allocation. Real proxy URLs are a few hundred bytes at most.
+	maxTemplateBytes = 4096
+	// unsafeAxisValueChars are URL structural delimiters (and whitespace) that
+	// a list-axis value must not contain, since it is substituted into a proxy
+	// URL and could otherwise inject a password, host, path, or query.
+	unsafeAxisValueChars = " \t\r\n:/?#@%"
+	// maxReportObservations bounds how many session_ip observations a single
+	// run report loads, so a long-running pool run whose page polls repeatedly
+	// cannot exhaust memory. maxReportIPRows bounds the IP-detail array in the
+	// response.
+	maxReportObservations = 50000
+	maxReportIPRows       = 2000
 )
 
 // Control owns the sampler worker lifecycle behind the HTTP API.
@@ -36,6 +52,9 @@ type Control interface {
 	Stop(context.Context, uuid.UUID) error
 	Reenable(context.Context, uuid.UUID) error
 	Delete(context.Context, uuid.UUID) error
+	// DeleteSessions deletes many sessions with a single flush and ClickHouse
+	// mutation, keeping large-run deletion within the request deadline.
+	DeleteSessions(context.Context, []uuid.UUID) error
 }
 
 // Defaults supplies request values that are not mode-specific.
@@ -46,12 +65,14 @@ type Defaults struct {
 
 // Server implements the generated strict server interface.
 type Server struct {
-	store    session.Store
-	control  Control
-	cipher   *cryptox.Cipher
-	reader   Reader
-	defaults Defaults
-	now      func() time.Time
+	store       session.Store
+	control     Control
+	cipher      *cryptox.Cipher
+	reader      Reader
+	defaults    Defaults
+	now         func() time.Time
+	runStore    variation.Store
+	maxVariants int
 }
 
 // Reader supplies ClickHouse-backed report, sample, export, and readiness data.
@@ -62,22 +83,29 @@ type Reader interface {
 	Series(context.Context, uuid.UUID, time.Time, time.Time, time.Duration) ([]ch.SeriesPoint, error)
 	Stickiness(context.Context, uuid.UUID, time.Time, time.Time) (ch.Stickiness, error)
 	PoolGrowth(context.Context, uuid.UUID, time.Time, time.Time) ([]ch.GrowthPoint, error)
+	SeriesForSessions(context.Context, []uuid.UUID, time.Time, time.Time, time.Duration) ([]ch.SeriesPoint, error)
 }
 
-// NewServer constructs the session control API.
+// NewServer constructs the session and run control API.
 // The optional reader preserves compatibility for control-only construction.
-func NewServer(store session.Store, control Control, cipher *cryptox.Cipher, defaults Defaults, readers ...Reader) *Server {
+func NewServer(store session.Store, control Control, cipher *cryptox.Cipher, defaults Defaults, runStore variation.Store, maxVariants int, readers ...Reader) *Server {
 	if defaults.ProbeTarget == "" {
 		defaults.ProbeTarget = defaultProbeTarget
 	}
 	if defaults.DialTimeout == 0 {
 		defaults.DialTimeout = defaultDialTimeout
 	}
+	if maxVariants <= 0 {
+		maxVariants = 128
+	}
 	var reader Reader
 	if len(readers) > 0 {
 		reader = readers[0]
 	}
-	return &Server{store: store, control: control, cipher: cipher, reader: reader, defaults: defaults, now: time.Now}
+	return &Server{
+		store: store, control: control, cipher: cipher, reader: reader, defaults: defaults, now: time.Now,
+		runStore: runStore, maxVariants: maxVariants,
+	}
 }
 
 // Handler registers generated paths directly on a root chi router.
@@ -97,25 +125,49 @@ func (s *Server) Handler() http.Handler {
 	})
 }
 
+// validateCreateSessionRequest caps the body size of POST /api/sessions and
+// POST /api/runs, and additionally validates the field allowlist for
+// /api/sessions (runs have a different, axes-based body shape that is
+// validated downstream in the run-expansion path instead).
 func validateCreateSessionRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateSessionBodyBytes))
-		if err != nil {
-			requestErrorHandler(w, r, err)
-			return
-		}
-		r.Body = io.NopCloser(bytes.NewReader(raw))
-		r.ContentLength = int64(len(raw))
-		if err := validateCreateSessionJSON(raw); err != nil {
-			requestErrorHandler(w, r, err)
-			return
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions":
+			raw, ok := readCappedBody(w, r)
+			if !ok {
+				return
+			}
+			if err := validateCreateSessionJSON(raw); err != nil {
+				requestErrorHandler(w, r, err)
+				return
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/runs":
+			raw, ok := readCappedBody(w, r)
+			if !ok {
+				return
+			}
+			if err := validateCreateRunJSON(raw); err != nil {
+				requestErrorHandler(w, r, err)
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// readCappedBody reads r.Body through a maxCreateSessionBodyBytes-limited
+// reader and resets r.Body/r.ContentLength so downstream handlers can read it
+// again. On error it writes the request-error response and returns ok=false;
+// callers must stop processing the request in that case.
+func readCappedBody(w http.ResponseWriter, r *http.Request) (raw []byte, ok bool) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateSessionBodyBytes))
+	if err != nil {
+		requestErrorHandler(w, r, err)
+		return nil, false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	r.ContentLength = int64(len(raw))
+	return raw, true
 }
 
 func validateCreateSessionJSON(raw []byte) error {
@@ -136,6 +188,65 @@ func validateCreateSessionJSON(raw []byte) error {
 			}
 		default:
 			return invalidRequest()
+		}
+	}
+	return nil
+}
+
+// validateCreateRunJSON enforces the same strict shape for POST /api/runs that
+// validateCreateSessionJSON enforces for sessions: an exact field allowlist, no
+// trailing data, no null on non-nullable optional fields, and per-axis key
+// allowlisting. Without it the generated decoder silently drops typo'd fields
+// (e.g. max_sample) and nested axis typos, despite additionalProperties:false.
+func validateCreateRunJSON(raw []byte) error {
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := decoder.Decode(&fields); err != nil || fields == nil {
+		return invalidRequest()
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return invalidRequest()
+	}
+	for name, value := range fields {
+		switch name {
+		case "name", "template", "mode", "cadence_seconds", "max_samples", "max_duration_seconds":
+		case "probes_per_sample", "probe_target", "dial_timeout_ms":
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return invalidRequest()
+			}
+		case "axes":
+			if err := validateAxesJSON(value); err != nil {
+				return err
+			}
+		default:
+			return invalidRequest()
+		}
+	}
+	return nil
+}
+
+// validateAxesJSON rejects a null axes object and any axis carrying a key
+// outside the AxisSpec allowlist, so a typo like "value" (for "values") fails
+// loudly instead of being silently ignored.
+func validateAxesJSON(raw json.RawMessage) error {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return invalidRequest()
+	}
+	var axes map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &axes); err != nil {
+		return invalidRequest()
+	}
+	for _, spec := range axes {
+		var axisFields map[string]json.RawMessage
+		if err := json.Unmarshal(spec, &axisFields); err != nil {
+			return invalidRequest()
+		}
+		for key := range axisFields {
+			switch key {
+			case "kind", "values", "from", "to", "count", "length":
+			default:
+				return invalidRequest()
+			}
 		}
 	}
 	return nil

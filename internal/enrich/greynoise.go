@@ -3,6 +3,7 @@ package enrich
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -29,6 +30,13 @@ func (p *GreyNoise) Lookup(ctx context.Context, ip netip.Addr) (Partial, error) 
 	headers.Set("Accept", "application/json")
 	body, err := providerGET(ctx, p.client, p.Name(), p.baseURL+ip.String(), headers)
 	if err != nil {
+		// The GreyNoise community API returns 404 for an IP it has not observed
+		// scanning the internet — the common case, not an error. Treat it as a
+		// benign "no signal" result instead of failing enrichment.
+		var httpErr *providerHTTPError
+		if errors.As(err, &httpErr) && httpErr.statusCode == http.StatusNotFound {
+			return Partial{}, nil
+		}
 		return Partial{}, err
 	}
 	var response struct {

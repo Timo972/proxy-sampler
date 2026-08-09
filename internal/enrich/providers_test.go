@@ -16,12 +16,12 @@ var providerTestIP = netip.MustParseAddr("203.0.113.7")
 
 func TestIPAPILookupParsesPayloadAndBuildsRequest(t *testing.T) {
 	t.Parallel()
-	payload := `{"status":"success","country":"United States","regionName":"Virginia","city":"Ashburn","isp":"HostRush","as":"AS62633 HostRush","mobile":false,"proxy":false,"hosting":false}`
+	payload := `{"status":"success","countryCode":"US","regionName":"Virginia","city":"Ashburn","isp":"HostRush","as":"AS62633 HostRush","mobile":false,"proxy":false,"hosting":false}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/json/203.0.113.7" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		if got, want := r.URL.Query().Get("fields"), "status,country,regionName,city,isp,as,mobile,proxy,hosting"; got != want {
+		if got, want := r.URL.Query().Get("fields"), "status,countryCode,regionName,city,isp,as,mobile,proxy,hosting"; got != want {
 			t.Errorf("fields = %q, want %q", got, want)
 		}
 		_, _ = w.Write([]byte(payload))
@@ -34,7 +34,8 @@ func TestIPAPILookupParsesPayloadAndBuildsRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if partial.Country != "United States" || partial.Region != "Virginia" || partial.City != "Ashburn" || partial.ISP != "HostRush" || partial.ASN != "AS62633 HostRush" {
+	// Country stores the ISO code so it can be matched against provider targeting.
+	if partial.Country != "US" || partial.Region != "Virginia" || partial.City != "Ashburn" || partial.ISP != "HostRush" || partial.ASN != "AS62633 HostRush" {
 		t.Fatalf("unexpected location/network fields: %#v", partial)
 	}
 	assertBoolPointer(t, "IsMobile", partial.IsMobile, false)
@@ -74,6 +75,45 @@ func TestProxyCheckLookupParsesPayloadAndBuildsRequest(t *testing.T) {
 	assertRawPayload(t, partial, "proxycheck", payload)
 	if !partial.HadSignal || provider.Name() != "proxycheck" {
 		t.Fatalf("HadSignal=%v Name=%q", partial.HadSignal, provider.Name())
+	}
+}
+
+func TestProxyCheckLookupAcceptsNumericRisk(t *testing.T) {
+	t.Parallel()
+	// Production returns risk as a JSON number, not a quoted string.
+	payload := `{"status":"ok","203.0.113.7":{"type":"Wireless","proxy":"yes","risk":73}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := NewProxyCheck(server.Client())
+	provider.baseURL = server.URL + "/v2/"
+	partial, err := provider.Lookup(context.Background(), providerTestIP)
+	if err != nil {
+		t.Fatalf("Lookup with numeric risk: %v", err)
+	}
+	assertIntPointer(t, "RiskScore", partial.RiskScore, 73)
+}
+
+func TestGreyNoiseTreats404AsBenign(t *testing.T) {
+	t.Parallel()
+	// GreyNoise community returns 404 for an IP it has not observed.
+	body := `{"ip":"203.0.113.7","noise":false,"riot":false,"message":"IP not observed scanning the internet."}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := NewGreyNoise(server.Client())
+	provider.baseURL = server.URL + "/v3/community/"
+	partial, err := provider.Lookup(context.Background(), providerTestIP)
+	if err != nil {
+		t.Fatalf("404 should be benign, got error: %v", err)
+	}
+	if partial.HadSignal || partial.GreyNoiseClass != "" {
+		t.Fatalf("partial = %#v, want empty no-signal", partial)
 	}
 }
 

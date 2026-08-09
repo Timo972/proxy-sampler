@@ -27,6 +27,7 @@ SELECT
   s.created_at, s.started_at, s.stopped_at, s.sequence_offset
 FROM sampling_sessions AS s
 LEFT JOIN ip_reputation_cache AS r ON r.ip = s.last_primary_ip
+WHERE s.run_id IS NULL
 ORDER BY s.created_at DESC;
 
 -- name: SessionByID :one

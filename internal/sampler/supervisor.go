@@ -1,9 +1,11 @@
 package sampler
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 
 type sessionReader interface {
 	DeleteSession(context.Context, uuid.UUID) error
+	DeleteSessions(context.Context, []uuid.UUID) error
 }
 
 const (
@@ -346,6 +349,80 @@ func (s *Supervisor) Delete(ctx context.Context, id uuid.UUID) error {
 			return err
 		}
 		return s.store.Delete(ctx, id)
+	})
+}
+
+// DeleteSessions deletes many sessions with the per-session flush and
+// ClickHouse mutation performed once for the whole set rather than once per
+// session, keeping deletion of a large run within the request's write
+// deadline. Every child's session-operation lock is held for the whole
+// duration — through the stop, the single flush, the single ClickHouse
+// mutation, and the row deletes — so a concurrent Reenable cannot start a new
+// worker after the barrier and leave it orphaned by the row deletion. It is
+// idempotent: already-stopped or already-deleted sessions are skipped, so a
+// retry after a partial failure completes cleanly.
+func (s *Supervisor) DeleteSessions(ctx context.Context, ids []uuid.UUID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	// Acquire every lock in a stable (sorted) order so overlapping deletions
+	// cannot deadlock. Single-session operations only ever hold one lock, so
+	// they always make progress and release for this batch. De-duplicate first:
+	// a repeated id would nest withSessionOperation on itself and deadlock
+	// against its own in-flight operation.
+	ordered := append([]uuid.UUID(nil), ids...)
+	sort.Slice(ordered, func(i, j int) bool { return bytes.Compare(ordered[i][:], ordered[j][:]) < 0 })
+	deduped := ordered[:0]
+	for i, id := range ordered {
+		if i == 0 || id != ordered[i-1] {
+			deduped = append(deduped, id)
+		}
+	}
+	ordered = deduped
+
+	return s.withOperations(ctx, ordered, func() error {
+		for _, id := range ordered {
+			value, err := s.store.SessionByID(ctx, id)
+			if errors.Is(err, session.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if value.Status != session.StatusRunning {
+				continue
+			}
+			stopCtx, cancelStop := context.WithTimeout(ctx, s.stopTimeout)
+			err = s.stopWithOwnership(stopCtx, id)
+			cancelStop()
+			if err != nil && !errors.Is(err, session.ErrNotRunning) {
+				return err
+			}
+		}
+		if err := s.sink.Flush(ctx); err != nil {
+			return fmt.Errorf("flush samples before delete: %w", err)
+		}
+		if err := s.reader.DeleteSessions(ctx, ordered); err != nil {
+			return err
+		}
+		for _, id := range ordered {
+			if err := s.store.Delete(ctx, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// withOperations holds every session's operation lock at once for the duration
+// of fn by nesting withSessionOperation. ids must be de-duplicated and in a
+// stable order (see DeleteSessions) to stay deadlock-free.
+func (s *Supervisor) withOperations(ctx context.Context, ids []uuid.UUID, fn func() error) error {
+	if len(ids) == 0 {
+		return fn()
+	}
+	return s.withSessionOperation(ctx, ids[0], func() error {
+		return s.withOperations(ctx, ids[1:], fn)
 	})
 }
 

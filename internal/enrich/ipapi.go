@@ -32,21 +32,21 @@ func NewIPAPI(client *http.Client) *IPAPI {
 func (p *IPAPI) Name() string { return "ip-api" }
 
 func (p *IPAPI) Lookup(ctx context.Context, ip netip.Addr) (Partial, error) {
-	requestURL := p.baseURL + ip.String() + "?fields=status,country,regionName,city,isp,as,mobile,proxy,hosting"
+	requestURL := p.baseURL + ip.String() + "?fields=status,countryCode,regionName,city,isp,as,mobile,proxy,hosting"
 	body, err := providerGET(ctx, p.client, p.Name(), requestURL, nil)
 	if err != nil {
 		return Partial{}, err
 	}
 	var response struct {
-		Status     string `json:"status"`
-		Country    string `json:"country"`
-		RegionName string `json:"regionName"`
-		City       string `json:"city"`
-		ISP        string `json:"isp"`
-		ASN        string `json:"as"`
-		Mobile     *bool  `json:"mobile"`
-		Proxy      *bool  `json:"proxy"`
-		Hosting    *bool  `json:"hosting"`
+		Status      string `json:"status"`
+		CountryCode string `json:"countryCode"`
+		RegionName  string `json:"regionName"`
+		City        string `json:"city"`
+		ISP         string `json:"isp"`
+		ASN         string `json:"as"`
+		Mobile      *bool  `json:"mobile"`
+		Proxy       *bool  `json:"proxy"`
+		Hosting     *bool  `json:"hosting"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return Partial{}, fmt.Errorf("%s: decode response: %w", p.Name(), err)
@@ -54,8 +54,11 @@ func (p *IPAPI) Lookup(ctx context.Context, ip netip.Addr) (Partial, error) {
 	if response.Status != "success" {
 		return Partial{}, fmt.Errorf("%s: provider status %q", p.Name(), response.Status)
 	}
+	// Store the ISO 3166-1 alpha-2 code (e.g. "DE"), not the full English name,
+	// so it can be compared against the ISO codes proxy providers use as
+	// country targeting tokens (the run report's honor rate).
 	return Partial{
-		Country: response.Country, Region: response.RegionName, City: response.City,
+		Country: response.CountryCode, Region: response.RegionName, City: response.City,
 		ISP: response.ISP, ASN: response.ASN, IsMobile: response.Mobile,
 		IPAPIProxy: response.Proxy, IPAPIHosting: response.Hosting,
 		Raw: map[string]json.RawMessage{p.Name(): body}, HadSignal: true,
@@ -88,10 +91,7 @@ func providerGET(ctx context.Context, client *http.Client, provider, requestURL 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		excerpt, _ := io.ReadAll(io.LimitReader(response.Body, maxHTTPErrorExcerpt))
 		cleaned := strings.TrimSpace(string(excerpt))
-		if cleaned == "" {
-			return nil, fmt.Errorf("%s: HTTP status %d", provider, response.StatusCode)
-		}
-		return nil, fmt.Errorf("%s: HTTP status %d: %s", provider, response.StatusCode, strconv.QuoteToASCII(cleaned))
+		return nil, &providerHTTPError{provider: provider, statusCode: response.StatusCode, body: cleaned}
 	}
 
 	limited := io.LimitReader(response.Body, maxProviderBody+1)
@@ -113,3 +113,19 @@ type providerRequestError struct {
 func (e *providerRequestError) Error() string { return e.provider + ": request failed" }
 
 func (e *providerRequestError) Unwrap() error { return e.cause }
+
+// providerHTTPError is a non-2xx provider response. It carries the status code
+// so callers can treat specific statuses as benign (e.g. GreyNoise 404 for an
+// IP it has not observed).
+type providerHTTPError struct {
+	provider   string
+	statusCode int
+	body       string
+}
+
+func (e *providerHTTPError) Error() string {
+	if e.body == "" {
+		return fmt.Sprintf("%s: HTTP status %d", e.provider, e.statusCode)
+	}
+	return fmt.Sprintf("%s: HTTP status %d: %s", e.provider, e.statusCode, strconv.QuoteToASCII(e.body))
+}

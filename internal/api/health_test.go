@@ -10,7 +10,7 @@ import (
 )
 
 func TestHealthzIsLiveWithoutCheckingDependencies(t *testing.T) {
-	server := NewServer(nil, nil, nil, Defaults{})
+	server := NewServer(nil, nil, nil, Defaults{}, nil, 128)
 	response := request(t, server.Handler(), http.MethodGet, "/healthz", "")
 	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"status":"ok"}` {
 		t.Fatalf("response = %d %s, want 200 status ok", response.Code, response.Body.String())

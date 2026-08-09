@@ -1,25 +1,43 @@
 import { AlertTriangle, Plus, RotateCw } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
 
-import { useSessions, useStopSession } from '../lib/api'
+import { type Run, useRuns, useSessions, useStopSession } from '../lib/api'
+import { formatTimestamp } from '../lib/format'
 import { SessionTable } from '../components/session-table'
+import { SessionStatusBadge } from '../components/session-status-badge'
 import { Alert } from '../components/ui/alert'
 import { Button } from '../components/ui/button'
 import { Skeleton } from '../components/ui/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 
-export function HomePage({ onNewSession }: { onNewSession: () => void }) {
+export function HomePage({ onNewSession, onNewRun }: { onNewSession: () => void; onNewRun: () => void }) {
   const sessions = useSessions()
   const stop = useStopSession()
+  const runs = useRuns()
 
+  // The runs and sessions sections load independently — a sessions failure must
+  // not hide the runs UI (including the only "New run" button), and vice versa.
+  return (
+    <main className="home-page">
+      <RunsSection runs={runs} onNewRun={onNewRun} />
+      <SessionsSection sessions={sessions} stop={stop} onNewSession={onNewSession} />
+    </main>
+  )
+}
+
+function SessionsSection({ sessions, stop, onNewSession }: {
+  sessions: ReturnType<typeof useSessions>
+  stop: ReturnType<typeof useStopSession>
+  onNewSession: () => void
+}) {
   if (sessions.isPending) return <SessionSkeleton />
   if (sessions.isError) {
     return (
-      <main className="home-page">
-        <Alert className="error-state">
-          <AlertTriangle aria-hidden="true" size={18} />
-          <div><strong>Sessions are unavailable</strong><p>{sessions.error.message}</p></div>
-          <Button type="button" variant="secondary" onClick={() => sessions.refetch()}><RotateCw aria-hidden="true" size={15} /> Retry</Button>
-        </Alert>
-      </main>
+      <Alert className="error-state">
+        <AlertTriangle aria-hidden="true" size={18} />
+        <div><strong>Sessions are unavailable</strong><p>{sessions.error.message}</p></div>
+        <Button type="button" variant="secondary" onClick={() => sessions.refetch()}><RotateCw aria-hidden="true" size={15} /> Retry</Button>
+      </Alert>
     )
   }
 
@@ -28,7 +46,7 @@ export function HomePage({ onNewSession }: { onNewSession: () => void }) {
   const stoppingID = stop.isPending ? stop.variables : undefined
 
   return (
-    <main className="home-page">
+    <>
       {stop.isError && (
         <Alert className="inline-alert">
           <AlertTriangle aria-hidden="true" size={18} />
@@ -48,13 +66,64 @@ export function HomePage({ onNewSession }: { onNewSession: () => void }) {
           <SessionTable id="inactive-sessions" title="Stopped / Finished sessions" emptyMessage="Stopped and finished sessions will appear here." sessions={inactive} stoppingID={stoppingID} onStop={(session) => stop.mutate(session.id)} />
         </div>
       )}
-    </main>
+    </>
+  )
+}
+
+function RunsSection({ runs, onNewRun }: { runs: ReturnType<typeof useRuns>; onNewRun: () => void }) {
+  const navigate = useNavigate()
+  return (
+    <section className="runs-section" aria-labelledby="runs-heading">
+      <div className="section-heading">
+        <h2 id="runs-heading">Parameter-variation runs</h2>
+        <span className="section-count" aria-label={`${runs.data?.length ?? 0} runs`}>{runs.data?.length ?? 0}</span>
+        <Button type="button" variant="secondary" size="small" className="section-action" onClick={onNewRun}><Plus aria-hidden="true" size={15} /> New run</Button>
+      </div>
+      {runs.isPending ? (
+        <div className="skeleton-list">
+          <div className="skeleton-row" aria-label="Loading runs"><Skeleton /><Skeleton /><Skeleton /><Skeleton /></div>
+        </div>
+      ) : runs.isError ? (
+        <Alert className="inline-alert">
+          <AlertTriangle aria-hidden="true" size={18} />
+          <div><strong>Runs are unavailable</strong><p>{runs.error.message}</p></div>
+          <Button type="button" variant="secondary" onClick={() => runs.refetch()}><RotateCw aria-hidden="true" size={15} /> Retry</Button>
+        </Alert>
+      ) : runs.data.length === 0 ? (
+        <p className="section-empty">No parameter-variation runs yet. A run expands one template across several proxy configurations.</p>
+      ) : (
+        <div className="data-table-wrap">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Variants</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Distinct IPs</TableHead>
+                <TableHead>Created</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {runs.data.map((run: Run) => (
+                <TableRow key={run.id} className="session-row" onClick={() => navigate(`/runs/${run.id}`)}>
+                  <TableCell><Link className="session-link" to={`/runs/${run.id}`} onClick={(event) => event.stopPropagation()}><strong>{run.name}</strong></Link></TableCell>
+                  <TableCell className="numeric">{run.variant_count}</TableCell>
+                  <TableCell><SessionStatusBadge status={run.status} /></TableCell>
+                  <TableCell className="numeric">{run.distinct_ips}</TableCell>
+                  <TableCell>{formatTimestamp(run.created_at)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </section>
   )
 }
 
 function SessionSkeleton() {
   return (
-    <main className="home-page" role="status" aria-label="Loading sessions">
+    <div role="status" aria-label="Loading sessions">
       <span className="sr-only">Loading sessions</span>
       <div className="skeleton-heading"><Skeleton /><Skeleton /></div>
       <div className="skeleton-list">
@@ -64,6 +133,6 @@ function SessionSkeleton() {
           </div>
         ))}
       </div>
-    </main>
+    </div>
   )
 }

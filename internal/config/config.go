@@ -19,6 +19,7 @@ type Config struct {
 	ReputationTTL      time.Duration
 	ProbeTargetDefault string
 	DBAutoMigrate      bool
+	MaxVariantsPerRun  int
 }
 
 // Load reads and validates configuration using getenv.
@@ -31,6 +32,7 @@ func Load(getenv func(string) string) (Config, error) {
 		ReputationTTL:      24 * time.Hour,
 		ProbeTargetDefault: valueOr(getenv("PROBE_TARGET_DEFAULT"), "https://speed.cloudflare.com/cdn-cgi/trace"),
 		DBAutoMigrate:      true,
+		MaxVariantsPerRun:  128,
 	}
 	if cfg.DatabaseURL == "" || cfg.ClickHouseDSN == "" {
 		return Config{}, errors.New("DATABASE_URL and CLICKHOUSE_DSN are required")
@@ -53,6 +55,11 @@ func Load(getenv func(string) string) (Config, error) {
 	if err == nil {
 		if raw := getenv("DB_AUTO_MIGRATE"); raw != "" {
 			cfg.DBAutoMigrate, err = strconv.ParseBool(raw)
+		}
+	}
+	if err == nil {
+		if raw := getenv("MAX_VARIANTS_PER_RUN"); raw != "" {
+			cfg.MaxVariantsPerRun, err = positiveInt(raw, "MAX_VARIANTS_PER_RUN")
 		}
 	}
 	if err != nil {

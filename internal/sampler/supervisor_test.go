@@ -324,6 +324,91 @@ func TestSupervisorDeleteOrdersStopFlushCHAndPostgres(t *testing.T) {
 	}
 }
 
+func TestSupervisorDeleteSessionsBatchesFlushAndClickHouse(t *testing.T) {
+	root, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := newFakeSessionStore()
+	v1, cipher := encryptedSession(t, 1)
+	v2, _ := encryptedSession(t, 1)
+	store.sessions[v1.ID] = v1
+	store.sessions[v2.ID] = v2
+	sink := &fakeEventSink{operations: &store.operations}
+	reader := &fakeSessionReader{operations: &store.operations}
+	supervisor := NewSupervisor(root, store, sink, reader, func(session.Session) *Worker {
+		return testWorker(store, cipher, blockingProber{}, &fakeLookup{}, sink)
+	})
+	if err := supervisor.Start(context.Background(), v1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.Start(context.Background(), v2.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.DeleteSessions(context.Background(), []uuid.UUID{v1.ID, v2.ID}); err != nil {
+		t.Fatalf("DeleteSessions: %v", err)
+	}
+
+	counts := map[string]int{}
+	for _, op := range store.operations {
+		counts[op]++
+	}
+	// The whole point of batching: one flush and one ClickHouse mutation for
+	// the whole set, regardless of how many sessions are deleted.
+	if counts["flush"] != 1 {
+		t.Fatalf("flush count = %d, want 1 (batched); operations=%v", counts["flush"], store.operations)
+	}
+	if counts["ch-delete-batch"] != 1 {
+		t.Fatalf("ch-delete-batch count = %d, want 1 (batched); operations=%v", counts["ch-delete-batch"], store.operations)
+	}
+	if counts["ch-delete"] != 0 {
+		t.Fatalf("per-session ch-delete count = %d, want 0", counts["ch-delete"])
+	}
+	if counts["pg-delete"] != 2 {
+		t.Fatalf("pg-delete count = %d, want 2; operations=%v", counts["pg-delete"], store.operations)
+	}
+}
+
+func TestSupervisorDeleteSessionsFencesConcurrentReenable(t *testing.T) {
+	root, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := newFakeSessionStore()
+	value, cipher := encryptedSession(t, 1)
+	store.sessions[value.ID] = value
+	sink := &fakeEventSink{flushEntered: make(chan struct{}, 1), flushGate: make(chan struct{})}
+	reader := &fakeSessionReader{}
+	supervisor := NewSupervisor(root, store, sink, reader, func(session.Session) *Worker {
+		return testWorker(store, cipher, blockingProber{}, &fakeLookup{}, sink)
+	})
+	if err := supervisor.Start(context.Background(), value.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	deleteErr := make(chan error, 1)
+	go func() { deleteErr <- supervisor.DeleteSessions(context.Background(), []uuid.UUID{value.ID}) }()
+
+	// DeleteSessions has stopped the worker and is now blocked in Flush while
+	// still holding the session's operation lock.
+	<-sink.flushEntered
+
+	reenableErr := make(chan error, 1)
+	go func() { reenableErr <- supervisor.Reenable(context.Background(), value.ID) }()
+
+	// Give the Reenable a moment to contend for the (held) operation lock, then
+	// let the deletion finish.
+	time.Sleep(20 * time.Millisecond)
+	close(sink.flushGate)
+
+	if err := <-deleteErr; err != nil {
+		t.Fatalf("DeleteSessions: %v", err)
+	}
+	// The Reenable was serialized after the deletion, so it finds no row —
+	// proving no worker was started between the flush barrier and the row
+	// deletion. Without the held lock it would have re-enabled the session and
+	// left an orphan.
+	if err := <-reenableErr; !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("Reenable err = %v, want ErrNotFound (serialized after delete)", err)
+	}
+}
+
 func TestSupervisorDeletePreservesPostgresWhenClickHouseDeleteFails(t *testing.T) {
 	store := newFakeSessionStore()
 	value, _ := encryptedSession(t, 1)
@@ -901,6 +986,18 @@ func (r *fakeSessionReader) DeleteSession(context.Context, uuid.UUID) error {
 	}
 	if r.operations != nil {
 		*r.operations = append(*r.operations, "ch-delete")
+	}
+	return nil
+}
+
+func (r *fakeSessionReader) DeleteSessions(context.Context, []uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	if r.operations != nil {
+		*r.operations = append(*r.operations, "ch-delete-batch")
 	}
 	return nil
 }

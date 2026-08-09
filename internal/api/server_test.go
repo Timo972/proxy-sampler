@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	cryptox "github.com/timo972/proxy-sampler/internal/crypto"
 	"github.com/timo972/proxy-sampler/internal/session"
-	"github.com/google/uuid"
 )
 
 const (
@@ -105,7 +105,7 @@ func TestCreateSessionUsesExplicitTargetTimeoutAndCaps(t *testing.T) {
 
 func TestCreateSessionRejectsMalformedProxyBeforeEncryption(t *testing.T) {
 	store := newMemoryStore()
-	server := NewServer(store, &fakeControl{}, nil, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second})
+	server := NewServer(store, &fakeControl{}, nil, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}, nil, 128)
 
 	response := request(t, server.Handler(), http.MethodPost, "/api/sessions", `{"name":"Invalid","proxy":"not a proxy URL","mode":"sticky","cadence_seconds":10}`)
 	assertAPIError(t, response, http.StatusBadRequest, "invalid_request")
@@ -175,7 +175,7 @@ func TestCreateSessionEnforcesRequestBodyLimit(t *testing.T) {
 	t.Run("limit plus one rejected before encryption", func(t *testing.T) {
 		store := newMemoryStore()
 		control := &fakeControl{}
-		server := NewServer(store, control, nil, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second})
+		server := NewServer(store, control, nil, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}, nil, 128)
 		response := request(t, server.Handler(), http.MethodPost, "/api/sessions", bodyAtLimit+" ")
 		assertAPIError(t, response, http.StatusBadRequest, "invalid_request")
 		if len(store.sessions) != 0 || len(control.started) != 0 {
@@ -505,7 +505,7 @@ func testHandler(t *testing.T, store session.Store, control Control) http.Handle
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewServer(store, control, cipher, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}).Handler()
+	return NewServer(store, control, cipher, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}, nil, 128).Handler()
 }
 
 func request(t *testing.T, handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -588,12 +588,16 @@ func sampleSession() session.Session {
 
 type fakeControl struct {
 	startErr, stopErr, reenableErr, deleteErr error
+	deleteSessionsErr                         error
 	started, stopped, reenabled, deleted      []uuid.UUID
+	deletedBatches                            [][]uuid.UUID
 	start                                     func(context.Context, uuid.UUID) error
 	reenable                                  func(context.Context, uuid.UUID) error
+	startCount, stopCount, deleteCount        int
 }
 
 func (f *fakeControl) Start(ctx context.Context, id uuid.UUID) error {
+	f.startCount++
 	f.started = append(f.started, id)
 	if f.start != nil {
 		return f.start(ctx, id)
@@ -602,6 +606,7 @@ func (f *fakeControl) Start(ctx context.Context, id uuid.UUID) error {
 }
 
 func (f *fakeControl) Stop(_ context.Context, id uuid.UUID) error {
+	f.stopCount++
 	f.stopped = append(f.stopped, id)
 	return f.stopErr
 }
@@ -615,8 +620,14 @@ func (f *fakeControl) Reenable(ctx context.Context, id uuid.UUID) error {
 }
 
 func (f *fakeControl) Delete(_ context.Context, id uuid.UUID) error {
+	f.deleteCount++
 	f.deleted = append(f.deleted, id)
 	return f.deleteErr
+}
+
+func (f *fakeControl) DeleteSessions(_ context.Context, ids []uuid.UUID) error {
+	f.deletedBatches = append(f.deletedBatches, ids)
+	return f.deleteSessionsErr
 }
 
 type memoryStore struct {

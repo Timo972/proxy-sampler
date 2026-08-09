@@ -41,6 +41,23 @@ func TestReaderRejectsHugePageBeforeQuery(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionsRemovesSamplesInOneMutation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r, sessionID, _ := integrationReaderFixture(t, ctx)
+
+	if err := r.DeleteSessions(ctx, []uuid.UUID{sessionID}); err != nil {
+		t.Fatalf("DeleteSessions: %v", err)
+	}
+	page, err := r.Samples(ctx, sessionID, nil, nil, 1)
+	if err != nil {
+		t.Fatalf("Samples: %v", err)
+	}
+	if page.Total != 0 {
+		t.Fatalf("total after batch delete = %d, want 0", page.Total)
+	}
+}
+
 func TestReaderReportsAndDeletion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -278,5 +295,109 @@ func assertUint32s(t *testing.T, got, want []uint32) {
 		if got[i] != want[i] {
 			t.Errorf("values[%d] = %d, want %d", i, got[i], want[i])
 		}
+	}
+}
+
+func TestSeriesForSessionsEmptyIDs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r, _, _ := integrationReaderFixture(t, ctx)
+
+	points, err := r.SeriesForSessions(ctx, nil, time.Now().Add(-time.Hour), time.Now(), time.Minute)
+	if err != nil {
+		t.Fatalf("SeriesForSessions: %v", err)
+	}
+	if len(points) != 0 {
+		t.Fatalf("expected no points for empty ids, got %d", len(points))
+	}
+}
+
+func TestSeriesForSessionsAggregatesAcrossSessions(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	dsn := os.Getenv("TEST_CLICKHOUSE_DSN")
+	if dsn == "" {
+		t.Skip("TEST_CLICKHOUSE_DSN is not set")
+	}
+	opts, err := clickhouse.ParseDSN(dsn)
+	if err != nil {
+		t.Fatalf("parse TEST_CLICKHOUSE_DSN: %v", err)
+	}
+	if err := chmigrate.Up(ctx, opts, discardLogger()); err != nil {
+		t.Fatalf("migrate ClickHouse: %v", err)
+	}
+	r, err := NewReader(ctx, opts)
+	if err != nil {
+		t.Fatalf("NewReader: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			t.Errorf("Reader.Close: %v", err)
+		}
+	})
+
+	s1, s2 := uuid.New(), uuid.New()
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = r.DeleteSession(cleanupCtx, s1)
+		_ = r.DeleteSession(cleanupCtx, s2)
+	})
+
+	base := time.Date(2026, 7, 22, 9, 0, 0, 0, time.UTC)
+	events := seriesForSessionsFixtureEvents(s1, s2, base)
+
+	w, err := NewWriter(ctx, opts, discardLogger())
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	for i, event := range events {
+		if !w.Enqueue(event) {
+			t.Fatalf("enqueue event %d rejected", i)
+		}
+	}
+	if err := w.Flush(ctx); err != nil {
+		t.Fatalf("flush events: %v", err)
+	}
+	if err := w.Close(ctx); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	points, err := r.SeriesForSessions(ctx, []uuid.UUID{s1, s2}, base.Add(-time.Hour), base.Add(time.Hour), 5*time.Minute)
+	if err != nil {
+		t.Fatalf("SeriesForSessions: %v", err)
+	}
+	if len(points) == 0 {
+		t.Fatal("expected aggregated series points across both sessions")
+	}
+}
+
+func seriesForSessionsFixtureEvents(s1, s2 uuid.UUID, base time.Time) []Event {
+	makeEvent := func(sessionID uuid.UUID, seq uint32, offset time.Duration) Event {
+		return Event{
+			SessionID:       sessionID,
+			SampledAt:       base.Add(offset),
+			SampleSeq:       seq,
+			ProbesAttempted: 2,
+			ProbesOK:        2,
+			PrimaryIP:       net.ParseIP("2001:db8::1"),
+			DistinctIPs:     1,
+			IPChanged:       0,
+			NewIPs:          1,
+			RTTMinMS:        10,
+			RTTMedMS:        10,
+			RTTMaxMS:        10,
+			EgressCountry:   "DE",
+			PrimaryCategory: "residential",
+			ProbeIPs:        []net.IP{net.ParseIP("2001:db8::1"), net.ParseIP("2001:db8::1")},
+			ProbeRTTsMS:     []uint32{10, 10},
+			ProbeOK:         []uint8{1, 1},
+		}
+	}
+	return []Event{
+		makeEvent(s1, 1, 0),
+		makeEvent(s1, 2, 10*time.Second),
+		makeEvent(s2, 1, 0),
+		makeEvent(s2, 2, 10*time.Second),
 	}
 }
