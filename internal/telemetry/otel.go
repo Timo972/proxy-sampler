@@ -43,6 +43,7 @@ var (
 	newLogExporter = func(ctx context.Context) (sdklog.Exporter, error) {
 		return otlploghttp.New(ctx)
 	}
+	newResource = buildResource
 )
 
 // Init installs OTLP/HTTP trace, metric, and log providers. With no common
@@ -58,9 +59,15 @@ func Init(ctx context.Context, getenv func(string) string, logger *slog.Logger) 
 		logger = slog.Default()
 	}
 
-	res, err := buildResource(ctx)
+	// resource.New reports every detector failure but still returns the
+	// attributes the remaining detectors produced, so a failure here degrades
+	// the resource rather than invalidating it. Note that not all of these
+	// errors wrap resource.ErrPartialResource: the process owner detector
+	// returns user.Current's error verbatim, which is how a container UID
+	// without an /etc/passwd entry surfaces.
+	res, err := newResource(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("build telemetry resource: %w", err)
+		logger.Warn("incomplete telemetry resource", "error", err)
 	}
 	metricExporter, err := newMetricExporter(ctx)
 	if err != nil {

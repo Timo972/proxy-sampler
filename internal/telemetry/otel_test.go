@@ -17,6 +17,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -123,6 +124,51 @@ func TestInitCleansMetricExporterWhenTraceSetupFails(t *testing.T) {
 	}
 }
 
+func TestInitKeepsPartialResourceWhenDetectionFails(t *testing.T) {
+	// resource.New reports detector failures but still returns everything the
+	// remaining detectors produced. The process owner detector returns
+	// user.Current's error verbatim rather than wrapping ErrPartialResource, so
+	// a container UID with no /etc/passwd entry yields a plain error here. This
+	// is the wording the CGO_ENABLED=0 build emits; cgo builds instead report
+	// "user: unknown userid 65532".
+	detectionErr := errors.New("error detecting resource: user: Current requires cgo or $USER set in environment")
+	partial := resource.NewSchemaless(attribute.String("service.name", "proxy-sampler"))
+	restoreResource := replaceResourceFactory(t, func(context.Context) (*resource.Resource, error) {
+		return partial, detectionErr
+	})
+	defer restoreResource()
+	restore := replaceExporterFactories(t,
+		func(context.Context) (sdkmetric.Exporter, error) { return &fakeMetricExporter{}, nil },
+		func(context.Context) (sdktrace.SpanExporter, error) { return &fakeTraceExporter{}, nil },
+		func(context.Context) (sdklog.Exporter, error) { return &fakeLogExporter{}, nil },
+	)
+	defer restore()
+
+	originalTracer := otel.GetTracerProvider()
+	originalMeter := otel.GetMeterProvider()
+	originalLogger := global.GetLoggerProvider()
+	t.Cleanup(func() {
+		otel.SetTracerProvider(originalTracer)
+		otel.SetMeterProvider(originalMeter)
+		global.SetLoggerProvider(originalLogger)
+	})
+
+	var logs bytes.Buffer
+	shutdown, err := Init(context.Background(), endpointGetenv, slog.New(slog.NewJSONHandler(&logs, nil)))
+	if err != nil {
+		t.Fatalf("Init with an incomplete resource: %v", err)
+	}
+	if otel.GetTracerProvider() == originalTracer || otel.GetMeterProvider() == originalMeter {
+		t.Fatal("incomplete resource detection suppressed the trace and metric providers")
+	}
+	if !strings.Contains(logs.String(), "Current requires cgo") {
+		t.Fatalf("incomplete resource detection was not reported: %s", logs.String())
+	}
+	if err := shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+}
+
 func TestBuildResourceForcesProxySamplerServiceName(t *testing.T) {
 	t.Setenv("OTEL_SERVICE_NAME", "wrong-service")
 	res, err := buildResource(context.Background())
@@ -143,6 +189,13 @@ func endpointGetenv(name string) string {
 }
 
 type exporterFactoryRestore func()
+
+func replaceResourceFactory(t *testing.T, factory func(context.Context) (*resource.Resource, error)) exporterFactoryRestore {
+	t.Helper()
+	original := newResource
+	newResource = factory
+	return func() { newResource = original }
+}
 
 func replaceExporterFactories(
 	t *testing.T,
