@@ -18,11 +18,18 @@ ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/proxy-sampler ./cmd/app
 
 FROM debian:bookworm-slim
+# The nonroot account matches the numeric USER below. Without it the runtime UID
+# resolves to no account at all, which breaks every os/user lookup in the
+# process -- including the OpenTelemetry process.owner resource detector.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 65532 nonroot \
+    && useradd --system --uid 65532 --gid 65532 \
+        --home-dir /home/nonroot --create-home --shell /usr/sbin/nologin nonroot
 COPY --from=go-builder /out/proxy-sampler /usr/local/bin/proxy-sampler
 ENV HTTP_ADDR=:8080
 EXPOSE 8080
+# Numeric so Kubernetes runAsNonRoot can verify it without resolving the name.
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/proxy-sampler"]
