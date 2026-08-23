@@ -88,8 +88,11 @@ function dominantCountry(ips: IPRow[]): { code: string; share: number } | undefi
   let sum = 0
   for (const ip of ips) {
     if (!ip.country) continue
+    // Bucket case-insensitively: a mixed-case code in the reputation data must
+    // not split the vote and downgrade a true match to partial.
+    const code = ip.country.toUpperCase()
     const weight = ip.hit_count > 0 ? ip.hit_count : 1
-    totals.set(ip.country, (totals.get(ip.country) ?? 0) + weight)
+    totals.set(code, (totals.get(code) ?? 0) + weight)
     sum += weight
   }
   if (sum === 0) return undefined
@@ -138,8 +141,16 @@ export function compareAttributes(parsed: ParsedAttributes, report: SessionRepor
   const country = attribute(parsed, 'country')
   const manual = targetCountry?.trim().toUpperCase() || ''
   if (country || manual) {
-    const code = manual || country!.value.toUpperCase()
-    const requested = manual ? `${code} (manual)` : code
+    const usernameCode = country ? country.value.toUpperCase() : ''
+    const code = manual || usernameCode
+    // When the manual target contradicts a username-encoded country, surface
+    // the overridden value too — a mismatch verdict against a hidden config
+    // country would send the operator debugging the wrong side.
+    const requested = manual
+      ? usernameCode && usernameCode !== manual
+        ? `${manual} (manual, overrides ${usernameCode})`
+        : `${manual} (manual)`
+      : usernameCode
     const observed = report ? dominantCountry(report.ips) : undefined
     rows.push(observed
       ? { label: 'Country', requested, observed: `${observed.code} (${pct(observed.share)})`, verdict: observed.code.toUpperCase() === code ? (observed.share >= 0.9 ? 'match' : 'partial') : 'mismatch' }

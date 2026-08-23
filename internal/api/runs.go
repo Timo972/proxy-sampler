@@ -549,16 +549,12 @@ func mapRun(summary variation.RunSummary) openapi.Run {
 func mapVariant(v variation.VariantSession) openapi.VariantSummary {
 	params := map[string]string{}
 	_ = json.Unmarshal(v.Params, &params)
-	result := openapi.VariantSummary{
+	return openapi.VariantSummary{
 		SessionId: v.SessionID, Name: v.Name, CellKey: v.CellKey, Params: params,
-		Status: openapi.VariantSummaryStatus(v.Status), SamplesTaken: v.Snapshot.SamplesTaken,
+		TargetCountry: optionalString(v.TargetCountry),
+		Status:        openapi.VariantSummaryStatus(v.Status), SamplesTaken: v.Snapshot.SamplesTaken,
 		DistinctIps: v.Snapshot.DistinctIPs,
 	}
-	if v.TargetCountry != "" {
-		targetCountry := v.TargetCountry
-		result.TargetCountry = &targetCountry
-	}
-	return result
 }
 
 // variantName combines the run name with a compact, deterministic suffix

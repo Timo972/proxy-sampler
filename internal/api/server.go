@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -486,20 +487,25 @@ func mapSession(value session.Session) openapi.Session {
 		lastPrimaryIP := value.Snapshot.LastPrimaryIP.String()
 		result.LastPrimaryIp = &lastPrimaryIP
 	}
-	if value.Snapshot.LastCategory != "" {
-		lastCategory := value.Snapshot.LastCategory
-		result.LastPrimaryCategory = &lastCategory
-	}
-	if value.Snapshot.LastError != "" {
-		lastError := value.Snapshot.LastError
-		result.LastError = &lastError
-	}
-	if value.TargetCountry != "" {
-		targetCountry := value.TargetCountry
-		result.TargetCountry = &targetCountry
-	}
+	result.LastPrimaryCategory = optionalString(value.Snapshot.LastCategory)
+	result.LastError = optionalString(value.Snapshot.LastError)
+	result.TargetCountry = optionalString(value.TargetCountry)
 	return result
 }
+
+// optionalString maps an empty-means-unset string to the pointer shape of the
+// generated response types: nil when empty, otherwise a pointer to a copy.
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+// targetCountryPattern mirrors the target_country schema in api/openapi.yaml
+// (sans the optional-empty alternative, which normalizedTargetCountry treats
+// as unset before matching).
+var targetCountryPattern = regexp.MustCompile(`^[A-Za-z]{2}$`)
 
 // normalizedTargetCountry validates an optional manual target country: unset
 // (nil or empty) is fine, otherwise it must be a 2-letter ISO 3166-1 alpha-2
@@ -509,16 +515,10 @@ func normalizedTargetCountry(value *string) (string, bool) {
 	if value == nil || *value == "" {
 		return "", true
 	}
-	code := *value
-	if len(code) != 2 {
+	if !targetCountryPattern.MatchString(*value) {
 		return "", false
 	}
-	for i := range 2 {
-		if code[i] < 'A' || (code[i] > 'Z' && code[i] < 'a') || code[i] > 'z' {
-			return "", false
-		}
-	}
-	return strings.ToUpper(code), true
+	return strings.ToUpper(*value), true
 }
 
 func durationSeconds(value *time.Duration) *int {
