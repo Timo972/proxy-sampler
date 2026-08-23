@@ -143,6 +143,46 @@ func TestBuildPoolReportHonorISPTolerantMatch(t *testing.T) {
 	}
 }
 
+func TestBuildPoolReportHonorUsesTargetCountryWithoutAxis(t *testing.T) {
+	s1 := uuid.New()
+	// A run without a country axis can carry a manual target country; it drives
+	// the honor outcome exactly like a country axis param would.
+	variants := []VariantSession{
+		{SessionID: s1, CellKey: `{}`, Params: json.RawMessage(`{"session":"abc"}`), TargetCountry: "de", Snapshot: session.Snapshot{SamplesTaken: 3}},
+	}
+	obs := []IPObservation{{SessionID: s1, IP: netip.MustParseAddr("9.9.9.2"), HitCount: 3, Reputation: rep("DE", "", "residential")}}
+	report := BuildPoolReport(variants, obs)
+	if report.HonorRate == nil || *report.HonorRate != 1 {
+		t.Fatalf("honor rate = %v, want 1 (manual target de, observed DE)", report.HonorRate)
+	}
+}
+
+func TestBuildPoolReportHonorTargetCountryMismatch(t *testing.T) {
+	s1 := uuid.New()
+	variants := []VariantSession{
+		{SessionID: s1, CellKey: `{}`, Params: json.RawMessage(`{}`), TargetCountry: "jp", Snapshot: session.Snapshot{SamplesTaken: 2}},
+	}
+	obs := []IPObservation{{SessionID: s1, IP: netip.MustParseAddr("9.9.9.3"), HitCount: 5, Reputation: rep("US", "", "datacenter")}}
+	report := BuildPoolReport(variants, obs)
+	if report.HonorRate == nil || *report.HonorRate != 0 {
+		t.Fatalf("honor rate = %v, want 0 (manual target jp, observed US)", report.HonorRate)
+	}
+}
+
+func TestBuildPoolReportHonorTargetCountryOverridesAxis(t *testing.T) {
+	s1 := uuid.New()
+	// When both a country axis param and a manual target exist, the manual
+	// target wins (chosen semantics: manual overrides).
+	variants := []VariantSession{
+		{SessionID: s1, CellKey: `{"country":"de"}`, Params: json.RawMessage(`{"country":"de"}`), TargetCountry: "us", Snapshot: session.Snapshot{SamplesTaken: 2}},
+	}
+	obs := []IPObservation{{SessionID: s1, IP: netip.MustParseAddr("9.9.9.4"), HitCount: 4, Reputation: rep("DE", "", "residential")}}
+	report := BuildPoolReport(variants, obs)
+	if report.HonorRate == nil || *report.HonorRate != 0 {
+		t.Fatalf("honor rate = %v, want 0 (manual target us overrides axis de; observed DE)", report.HonorRate)
+	}
+}
+
 func TestBuildPoolReportHonorUnknownWhenNoTarget(t *testing.T) {
 	s1 := uuid.New()
 	// A random/port-only variant targets no country or ISP, so its honor

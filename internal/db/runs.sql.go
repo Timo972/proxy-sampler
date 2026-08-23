@@ -57,7 +57,7 @@ INSERT INTO sampling_sessions (
   max_samples, max_duration_seconds, status, samples_taken, probes_ok,
   probes_total, distinct_ips, last_sample_at, last_primary_ip, last_rtt_ms,
   last_error, created_at, started_at, stopped_at, sequence_offset,
-  run_id, variant_params, cell_key
+  target_country, run_id, variant_params, cell_key
 ) VALUES (
   $1, $2, $3, $4,
   $5, $6, $7,
@@ -68,7 +68,7 @@ INSERT INTO sampling_sessions (
   NULLIF($19::text, '')::inet, $20,
   NULLIF($21::text, ''), $22,
   $23, $24, $25,
-  $26, $27, $28
+  $26, $27, $28, $29
 )
 `
 
@@ -98,6 +98,7 @@ type InsertRunSessionParams struct {
 	StartedAt          pgtype.Timestamptz `json:"started_at"`
 	StoppedAt          pgtype.Timestamptz `json:"stopped_at"`
 	SequenceOffset     int32              `json:"sequence_offset"`
+	TargetCountry      string             `json:"target_country"`
 	RunID              pgtype.UUID        `json:"run_id"`
 	VariantParams      []byte             `json:"variant_params"`
 	CellKey            *string            `json:"cell_key"`
@@ -130,6 +131,7 @@ func (q *Queries) InsertRunSession(ctx context.Context, arg InsertRunSessionPara
 		arg.StartedAt,
 		arg.StoppedAt,
 		arg.SequenceOffset,
+		arg.TargetCountry,
 		arg.RunID,
 		arg.VariantParams,
 		arg.CellKey,
@@ -286,7 +288,7 @@ func (q *Queries) RunIPObservations(ctx context.Context, arg RunIPObservationsPa
 const runSessions = `-- name: RunSessions :many
 SELECT
   s.id, s.name, COALESCE(s.variant_params, '{}'::jsonb) AS variant_params,
-  COALESCE(s.cell_key, '') AS cell_key, s.status,
+  COALESCE(s.cell_key, '') AS cell_key, s.target_country, s.status,
   s.samples_taken, s.probes_ok, s.probes_total, s.distinct_ips
 FROM sampling_sessions AS s
 WHERE s.run_id = $1
@@ -298,6 +300,7 @@ type RunSessionsRow struct {
 	Name          string    `json:"name"`
 	VariantParams []byte    `json:"variant_params"`
 	CellKey       string    `json:"cell_key"`
+	TargetCountry string    `json:"target_country"`
 	Status        string    `json:"status"`
 	SamplesTaken  int32     `json:"samples_taken"`
 	ProbesOk      int64     `json:"probes_ok"`
@@ -319,6 +322,7 @@ func (q *Queries) RunSessions(ctx context.Context, runID pgtype.UUID) ([]RunSess
 			&i.Name,
 			&i.VariantParams,
 			&i.CellKey,
+			&i.TargetCountry,
 			&i.Status,
 			&i.SamplesTaken,
 			&i.ProbesOk,

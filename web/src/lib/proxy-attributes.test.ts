@@ -87,6 +87,30 @@ describe('compareAttributes', () => {
     expect(isp.verdict).toBe('match')
   })
 
+  it('compares against a manual target country when the username has none', () => {
+    const rows = compareAttributes(parseProxyAttributes('session-ab12'), report, 'US')
+    const country = rows.find((r) => r.label === 'Country')!
+    expect(country.requested).toContain('US')
+    expect(country.requested).toContain('manual')
+    expect(country.observed).toContain('US')
+    expect(country.verdict).toBe('match')
+  })
+
+  it('lets a manual target country override the username country', () => {
+    const rows = compareAttributes(parseProxyAttributes('country-us'), report, 'DE')
+    const country = rows.find((r) => r.label === 'Country')!
+    expect(country.requested).toContain('DE')
+    // Dominant observed is US, so the overriding manual target de mismatches.
+    expect(country.verdict).toBe('mismatch')
+  })
+
+  it('reports an unknown verdict for a manual target with no observations', () => {
+    const rows = compareAttributes(parseProxyAttributes(''), { ...report, ips: [] }, 'DE')
+    const country = rows.find((r) => r.label === 'Country')!
+    expect(country.observed).toBe('—')
+    expect(country.verdict).toBe('unknown')
+  })
+
   it('marks a country request as partial when the dominant share is below the match threshold', () => {
     const mixedReport: SessionReport = {
       ...report,

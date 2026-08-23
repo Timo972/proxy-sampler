@@ -66,6 +66,7 @@ type SamplingSession struct {
 	RunID              pgtype.UUID        `json:"run_id"`
 	VariantParams      []byte             `json:"variant_params"`
 	CellKey            *string            `json:"cell_key"`
+	TargetCountry      string             `json:"target_country"`
 }
 
 type SessionIp struct {

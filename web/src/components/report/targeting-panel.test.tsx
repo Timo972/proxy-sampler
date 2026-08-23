@@ -26,4 +26,11 @@ describe('TargetingPanel', () => {
     render(<TargetingPanel session={{ ...session, proxy_username: null }} report={report} />)
     expect(screen.getByText(/no username/i)).toBeInTheDocument()
   })
+
+  it('renders the comparison from the manual target country when the proxy has no username', () => {
+    render(<TargetingPanel session={{ ...session, proxy_username: null, target_country: 'US' } as Session} report={report} />)
+    expect(screen.queryByText(/no username/i)).not.toBeInTheDocument()
+    expect(screen.getAllByText(/US/).length).toBeGreaterThan(0)
+    expect(screen.getByText('match')).toBeInTheDocument()
+  })
 })

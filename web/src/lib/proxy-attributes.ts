@@ -129,15 +129,20 @@ function pct(share: number): string {
   return `${Math.round(share * 100)}%`
 }
 
-export function compareAttributes(parsed: ParsedAttributes, report: SessionReport | undefined): ComparisonRow[] {
+export function compareAttributes(parsed: ParsedAttributes, report: SessionReport | undefined, targetCountry?: string | null): ComparisonRow[] {
   const rows: ComparisonRow[] = []
 
+  // A manually declared target country overrides any country parsed from the
+  // username; it is the only requested-country signal for proxies whose config
+  // does not encode one.
   const country = attribute(parsed, 'country')
-  if (country) {
-    const requested = country.value.toUpperCase()
+  const manual = targetCountry?.trim().toUpperCase() || ''
+  if (country || manual) {
+    const code = manual || country!.value.toUpperCase()
+    const requested = manual ? `${code} (manual)` : code
     const observed = report ? dominantCountry(report.ips) : undefined
     rows.push(observed
-      ? { label: 'Country', requested, observed: `${observed.code} (${pct(observed.share)})`, verdict: observed.code.toUpperCase() === requested ? (observed.share >= 0.9 ? 'match' : 'partial') : 'mismatch' }
+      ? { label: 'Country', requested, observed: `${observed.code} (${pct(observed.share)})`, verdict: observed.code.toUpperCase() === code ? (observed.share >= 0.9 ? 'match' : 'partial') : 'mismatch' }
       : { label: 'Country', requested, observed: '—', verdict: 'unknown' })
   }
 

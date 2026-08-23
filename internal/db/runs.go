@@ -49,7 +49,7 @@ func (s *Store) CreateRun(ctx context.Context, run variation.Run, children []var
 			LastSampleAt: base.LastSampleAt, LastPrimaryIp: base.LastPrimaryIp,
 			LastRttMs: base.LastRttMs, LastError: base.LastError, CreatedAt: base.CreatedAt,
 			StartedAt: base.StartedAt, StoppedAt: base.StoppedAt, SequenceOffset: base.SequenceOffset,
-			RunID: pgUUID(run.ID), VariantParams: child.Params, CellKey: &cellKey,
+			TargetCountry: base.TargetCountry, RunID: pgUUID(run.ID), VariantParams: child.Params, CellKey: &cellKey,
 		}); err != nil {
 			return fmt.Errorf("insert run session: %w", err)
 		}
@@ -108,7 +108,7 @@ func (s *Store) RunSessions(ctx context.Context, id uuid.UUID) ([]variation.Vari
 	for _, row := range rows {
 		result = append(result, variation.VariantSession{
 			SessionID: row.ID, Name: row.Name, Params: row.VariantParams, CellKey: row.CellKey,
-			Status: session.Status(row.Status),
+			TargetCountry: row.TargetCountry, Status: session.Status(row.Status),
 			Snapshot: session.Snapshot{
 				SamplesTaken: int(row.SamplesTaken), ProbesOK: row.ProbesOk,
 				ProbesTotal: row.ProbesTotal, DistinctIPs: int(row.DistinctIps),

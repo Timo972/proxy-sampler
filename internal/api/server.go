@@ -181,7 +181,7 @@ func validateCreateSessionJSON(raw []byte) error {
 	}
 	for name, value := range fields {
 		switch name {
-		case "name", "proxy", "mode", "cadence_seconds", "max_samples", "max_duration_seconds":
+		case "name", "proxy", "mode", "cadence_seconds", "max_samples", "max_duration_seconds", "target_country":
 		case "probes_per_sample", "probe_target", "dial_timeout_ms":
 			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 				return invalidRequest()
@@ -209,7 +209,7 @@ func validateCreateRunJSON(raw []byte) error {
 	}
 	for name, value := range fields {
 		switch name {
-		case "name", "template", "mode", "cadence_seconds", "max_samples", "max_duration_seconds":
+		case "name", "template", "mode", "cadence_seconds", "max_samples", "max_duration_seconds", "target_country":
 		case "probes_per_sample", "probe_target", "dial_timeout_ms":
 			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 				return invalidRequest()
@@ -290,6 +290,10 @@ func (s *Server) CreateSession(ctx context.Context, request openapi.CreateSessio
 		!validOptionalPersistedInteger(body.MaxSamples) || !validOptionalPersistedInteger(body.MaxDurationSeconds) {
 		return nil, invalidRequest()
 	}
+	targetCountry, ok := normalizedTargetCountry(body.TargetCountry)
+	if !ok {
+		return nil, invalidRequest()
+	}
 
 	proxyDisplay, err := proxydial.Display(*body.Proxy)
 	if err != nil {
@@ -309,7 +313,7 @@ func (s *Server) CreateSession(ctx context.Context, request openapi.CreateSessio
 		Cadence: time.Duration(body.CadenceSeconds) * time.Second, ProbesPerSample: probes,
 		ProbeTarget: probeTarget, DialTimeout: dialTimeout, MaxSamples: cloneInt(body.MaxSamples),
 		MaxDuration: secondsPointer(body.MaxDurationSeconds), Status: session.StatusRunning,
-		CreatedAt: now, StartedAt: timePointer(now),
+		TargetCountry: targetCountry, CreatedAt: now, StartedAt: timePointer(now),
 	}
 	created, err := s.store.Create(ctx, value)
 	if err != nil {
@@ -490,7 +494,31 @@ func mapSession(value session.Session) openapi.Session {
 		lastError := value.Snapshot.LastError
 		result.LastError = &lastError
 	}
+	if value.TargetCountry != "" {
+		targetCountry := value.TargetCountry
+		result.TargetCountry = &targetCountry
+	}
 	return result
+}
+
+// normalizedTargetCountry validates an optional manual target country: unset
+// (nil or empty) is fine, otherwise it must be a 2-letter ISO 3166-1 alpha-2
+// code, normalized to uppercase for storage so comparisons and display are
+// uniform regardless of how the operator typed it.
+func normalizedTargetCountry(value *string) (string, bool) {
+	if value == nil || *value == "" {
+		return "", true
+	}
+	code := *value
+	if len(code) != 2 {
+		return "", false
+	}
+	for i := range 2 {
+		if code[i] < 'A' || (code[i] > 'Z' && code[i] < 'a') || code[i] > 'z' {
+			return "", false
+		}
+	}
+	return strings.ToUpper(code), true
 }
 
 func durationSeconds(value *time.Duration) *int {

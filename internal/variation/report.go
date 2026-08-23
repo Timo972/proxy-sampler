@@ -202,7 +202,7 @@ func buildHonorAndCells(variants []VariantSession, sessionObs map[uuid.UUID][]IP
 		// un-reputed variant as a mismatch. Observation presence — not the
 		// per-run SamplesTaken counter, which a re-enable resets — drives this,
 		// so already-observed variants survive a re-enable.
-		switch variantHonor(v.Params, obs) {
+		switch variantHonor(v.Params, v.TargetCountry, obs) {
 		case honorMatch:
 			accum.sampled++
 			accum.honored++
@@ -249,11 +249,16 @@ const (
 // observed values across the variant's IPs. It returns honorUnknown when there
 // is nothing to compare — no target, or no known observed value for the target
 // — so such variants can be excluded from the honor-rate denominator rather
-// than silently counted as honored (100%) or as a mismatch.
-func variantHonor(params json.RawMessage, obs []IPObservation) honorOutcome {
+// than silently counted as honored (100%) or as a mismatch. A non-empty
+// targetCountry (the manually declared target) overrides any country axis
+// param.
+func variantHonor(params json.RawMessage, targetCountry string, obs []IPObservation) honorOutcome {
 	requested := map[string]string{}
 	_ = json.Unmarshal(params, &requested)
 	country := firstParam(requested, "country", "cc")
+	if targetCountry != "" {
+		country = targetCountry
+	}
 	isp := firstParam(requested, "isp")
 	if country == "" && isp == "" {
 		return honorUnknown

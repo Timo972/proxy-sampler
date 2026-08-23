@@ -3,7 +3,7 @@ import { compareAttributes, parseProxyAttributes } from '../../lib/proxy-attribu
 
 export function TargetingPanel({ session, report }: { session: Session; report: SessionReport | undefined }) {
   const parsed = parseProxyAttributes(session.proxy_username)
-  if (parsed.attributes.length === 0 && parsed.raw.length === 0) {
+  if (parsed.attributes.length === 0 && parsed.raw.length === 0 && !session.target_country) {
     return (
       <section className="report-section targeting-panel">
         <h2>Targeting</h2>
@@ -11,7 +11,7 @@ export function TargetingPanel({ session, report }: { session: Session; report: 
       </section>
     )
   }
-  const rows = compareAttributes(parsed, report)
+  const rows = compareAttributes(parsed, report, session.target_country)
   const groups: Array<['geo' | 'session' | 'network' | 'other', string]> = [
     ['geo', 'Geo'], ['session', 'Session'], ['network', 'Network'], ['other', 'Other'],
   ]

@@ -9,6 +9,7 @@ export interface Session {
   name: string
   proxy_display: string
   proxy_username?: string | null
+  target_country?: string | null
   mode: SessionMode
   status: SessionStatus
   cadence_seconds: number
@@ -42,6 +43,7 @@ export interface CreateSessionRequest {
   dial_timeout_ms?: number
   max_samples?: number | null
   max_duration_seconds?: number | null
+  target_country?: string
 }
 
 export interface Readiness {
@@ -323,6 +325,7 @@ export interface VariantSummary {
   name: string
   cell_key: string
   params: Record<string, string>
+  target_country?: string | null
   status: SessionStatus
   samples_taken: number
   distinct_ips: number
@@ -344,6 +347,7 @@ export interface CreateRunRequest {
   dial_timeout_ms?: number
   max_samples?: number | null
   max_duration_seconds?: number | null
+  target_country?: string
 }
 
 export interface CellReport {

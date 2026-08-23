@@ -63,6 +63,42 @@ func TestCreateRunExpandsVariants(t *testing.T) {
 	}
 }
 
+func TestCreateRunPropagatesTargetCountryToChildren(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	handler := testRunHandler(t, store, runStore, &fakeControl{})
+
+	body := `{"name":"geo","template":"socks5h://u-sid-{session}:pw@gate.example:1080","axes":{"session":{"kind":"random","count":2,"length":8}},"mode":"sticky","cadence_seconds":30,"target_country":"us"}`
+	resp := request(t, handler, http.MethodPost, "/api/runs", body)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	children := runStore.children[runStore.runs[0].ID]
+	if len(children) != 2 {
+		t.Fatalf("children = %d, want 2", len(children))
+	}
+	for _, child := range children {
+		if child.Session.TargetCountry != "US" {
+			t.Errorf("child target country = %q, want US (normalized uppercase)", child.Session.TargetCountry)
+		}
+	}
+}
+
+func TestCreateRunRejectsInvalidTargetCountry(t *testing.T) {
+	store := newMemoryStore()
+	runStore := newMemoryRunStore()
+	handler := testRunHandler(t, store, runStore, &fakeControl{})
+
+	body := `{"name":"geo","template":"socks5h://u:pw@gate.example:1080","axes":{},"mode":"sticky","cadence_seconds":30,"target_country":"usa"}`
+	resp := request(t, handler, http.MethodPost, "/api/runs", body)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", resp.Code, resp.Body.String())
+	}
+	if len(runStore.runs) != 0 {
+		t.Fatal("run persisted despite invalid target country")
+	}
+}
+
 func TestCreateRunRejectsCapExceeded(t *testing.T) {
 	store := newMemoryStore()
 	runStore := newMemoryRunStore()
