@@ -51,6 +51,25 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
         '503': {$ref: '#/components/responses/DependencyUnavailable'}
+    patch:
+      operationId: editSession
+      description: Edits the mutable properties of a session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EditSessionRequest'}
+      responses:
+        '200':
+          description: Session updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/DependencyUnavailable'}
     delete:
       operationId: deleteSession
       responses:
@@ -205,6 +224,27 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/RunDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/DependencyUnavailable'}
+    patch:
+      operationId: editRun
+      description: >-
+        Edits the mutable properties of a run. Renaming a run also renames the
+        child sessions that still carry their generated name, leaving any
+        variant renamed by hand untouched.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EditRunRequest'}
+      responses:
+        '200':
+          description: Run updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Run'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
@@ -373,6 +413,15 @@ components:
         max_samples: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
         max_duration_seconds: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
         target_country: {type: string, pattern: '^([A-Za-z]{2})?$', nullable: true}
+    EditSessionRequest:
+      type: object
+      additionalProperties: false
+      description: >-
+        Mutable session properties. Every property is optional so the payload
+        can grow to cover further editable fields; a request that sets none of
+        them is rejected.
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
     Session:
       type: object
       required: [id, name, proxy_display, mode, status, cadence_seconds, probes_per_sample,
@@ -612,6 +661,15 @@ components:
       required: [max_variants_per_run]
       properties:
         max_variants_per_run: {type: integer, minimum: 1}
+    EditRunRequest:
+      type: object
+      additionalProperties: false
+      description: >-
+        Mutable run properties. Every property is optional so the payload can
+        grow to cover further editable fields; a request that sets none of them
+        is rejected.
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
     Run:
       type: object
       required: [id, name, template_display, status, variant_count, distinct_ips, created_at]

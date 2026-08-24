@@ -237,6 +237,11 @@ p { text-wrap: pretty; }
 .session-title-line { display: flex; min-width: 0; align-items: center; gap: 0.75rem; }
 .session-title h1 { margin: 0; overflow-wrap: anywhere; font-size: 2.25rem; line-height: 1.15; letter-spacing: -0.035em; }
 .session-title p { margin: 0.5rem 0 0; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.editable-title { min-width: 0; }
+.editable-title-trigger { display: inline-flex; min-width: 0; align-items: center; gap: 0.5rem; border: 0; border-radius: var(--radius); padding: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: left; overflow-wrap: anywhere; cursor: text; }
+.editable-title-icon { flex: none; color: var(--muted-foreground); opacity: 0; transition: opacity 0.15s ease; }
+.editable-title-trigger:hover .editable-title-icon, .editable-title-trigger:focus-visible .editable-title-icon { opacity: 1; }
+.editable-title-input { min-height: 0; padding: 0.125rem 0.375rem; font: inherit; letter-spacing: inherit; }
 .session-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 0.625rem; }
 .session-actions a { text-decoration: none; }
 .back-link { display: inline-flex; margin-top: 1rem; color: var(--primary); text-underline-offset: 0.18em; }

@@ -554,6 +554,18 @@ func (s *fakeSessionStore) Reenable(_ context.Context, id uuid.UUID, at time.Tim
 	s.reenableCount.Add(1)
 	return nil
 }
+func (s *fakeSessionStore) Rename(_ context.Context, id uuid.UUID, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, ok := s.sessions[id]
+	if !ok {
+		return session.ErrNotFound
+	}
+	value.Name = name
+	s.sessions[id] = value
+	return nil
+}
+
 func (s *fakeSessionStore) Delete(_ context.Context, id uuid.UUID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

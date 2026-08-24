@@ -117,6 +117,19 @@ func (s *Store) Reenable(ctx context.Context, id uuid.UUID, at time.Time) error 
 	return nil
 }
 
+func (s *Store) Rename(ctx context.Context, id uuid.UUID, name string) error {
+	rows, err := s.q.RenameSession(ctx, RenameSessionParams{ID: id, Name: name})
+	if err != nil {
+		return fmt.Errorf("rename session: %w", err)
+	}
+	if rows == 0 {
+		// The update is unconditional, so the only way to match no row is a
+		// session that does not exist.
+		return session.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := s.q.DeleteSession(ctx, id); err != nil {
 		return fmt.Errorf("delete session: %w", err)

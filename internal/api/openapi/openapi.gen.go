@@ -236,6 +236,16 @@ type CreateSessionRequest struct {
 // CreateSessionRequestMode defines model for CreateSessionRequest.Mode.
 type CreateSessionRequestMode string
 
+// EditRunRequest Mutable run properties. Every property is optional so the payload can grow to cover further editable fields; a request that sets none of them is rejected.
+type EditRunRequest struct {
+	Name *string `json:"name,omitempty"`
+}
+
+// EditSessionRequest Mutable session properties. Every property is optional so the payload can grow to cover further editable fields; a request that sets none of them is rejected.
+type EditSessionRequest struct {
+	Name *string `json:"name,omitempty"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Code    string `json:"code"`
@@ -526,8 +536,14 @@ type SessionSamplesParams struct {
 // CreateRunJSONRequestBody defines body for CreateRun for application/json ContentType.
 type CreateRunJSONRequestBody = CreateRunRequest
 
+// EditRunJSONRequestBody defines body for EditRun for application/json ContentType.
+type EditRunJSONRequestBody = EditRunRequest
+
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
+
+// EditSessionJSONRequestBody defines body for EditSession for application/json ContentType.
+type EditSessionJSONRequestBody = EditSessionRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -546,6 +562,9 @@ type ServerInterface interface {
 
 	// (GET /api/runs/{id})
 	RunByID(w http.ResponseWriter, r *http.Request, id RunID)
+
+	// (PATCH /api/runs/{id})
+	EditRun(w http.ResponseWriter, r *http.Request, id RunID)
 
 	// (GET /api/runs/{id}/export.csv)
 	ExportRunCSV(w http.ResponseWriter, r *http.Request, id RunID)
@@ -570,6 +589,9 @@ type ServerInterface interface {
 
 	// (GET /api/sessions/{id})
 	SessionByID(w http.ResponseWriter, r *http.Request, id SessionID)
+
+	// (PATCH /api/sessions/{id})
+	EditSession(w http.ResponseWriter, r *http.Request, id SessionID)
 
 	// (GET /api/sessions/{id}/export.csv)
 	ExportSessionCSV(w http.ResponseWriter, r *http.Request, id SessionID, params ExportSessionCSVParams)
@@ -622,6 +644,11 @@ func (_ Unimplemented) RunByID(w http.ResponseWriter, r *http.Request, id RunID)
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (PATCH /api/runs/{id})
+func (_ Unimplemented) EditRun(w http.ResponseWriter, r *http.Request, id RunID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /api/runs/{id}/export.csv)
 func (_ Unimplemented) ExportRunCSV(w http.ResponseWriter, r *http.Request, id RunID) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -659,6 +686,11 @@ func (_ Unimplemented) DeleteSession(w http.ResponseWriter, r *http.Request, id 
 
 // (GET /api/sessions/{id})
 func (_ Unimplemented) SessionByID(w http.ResponseWriter, r *http.Request, id SessionID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /api/sessions/{id})
+func (_ Unimplemented) EditSession(w http.ResponseWriter, r *http.Request, id SessionID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -791,6 +823,32 @@ func (siw *ServerInterfaceWrapper) RunByID(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RunByID(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EditRun operation middleware
+func (siw *ServerInterfaceWrapper) EditRun(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id RunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EditRun(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -975,6 +1033,32 @@ func (siw *ServerInterfaceWrapper) SessionByID(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SessionByID(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EditSession operation middleware
+func (siw *ServerInterfaceWrapper) EditSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SessionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EditSession(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1371,6 +1455,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/runs/{id}", wrapper.RunByID)
 	})
 	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/runs/{id}", wrapper.EditRun)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/runs/{id}/export.csv", wrapper.ExportRunCSV)
 	})
 	r.Group(func(r chi.Router) {
@@ -1393,6 +1480,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/sessions/{id}", wrapper.SessionByID)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/sessions/{id}", wrapper.EditSession)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/sessions/{id}/export.csv", wrapper.ExportSessionCSV)
@@ -1724,6 +1814,87 @@ type RunByID503JSONResponse struct {
 }
 
 func (response RunByID503JSONResponse) VisitRunByIDResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EditRunRequestObject struct {
+	Id   RunID `json:"id"`
+	Body *EditRunJSONRequestBody
+}
+
+type EditRunResponseObject interface {
+	VisitEditRunResponse(w http.ResponseWriter) error
+}
+
+type EditRun200JSONResponse Run
+
+func (response EditRun200JSONResponse) VisitEditRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EditRun400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response EditRun400JSONResponse) VisitEditRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EditRun404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response EditRun404JSONResponse) VisitEditRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EditRun500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response EditRun500JSONResponse) VisitEditRunResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EditRun503JSONResponse struct {
+	DependencyUnavailableJSONResponse
+}
+
+func (response EditRun503JSONResponse) VisitEditRunResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -2326,6 +2497,87 @@ func (response SessionByID503JSONResponse) VisitSessionByIDResponse(w http.Respo
 	return err
 }
 
+type EditSessionRequestObject struct {
+	Id   SessionID `json:"id"`
+	Body *EditSessionJSONRequestBody
+}
+
+type EditSessionResponseObject interface {
+	VisitEditSessionResponse(w http.ResponseWriter) error
+}
+
+type EditSession200JSONResponse Session
+
+func (response EditSession200JSONResponse) VisitEditSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EditSession400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response EditSession400JSONResponse) VisitEditSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EditSession404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response EditSession404JSONResponse) VisitEditSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EditSession500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response EditSession500JSONResponse) VisitEditSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EditSession503JSONResponse struct {
+	DependencyUnavailableJSONResponse
+}
+
+func (response EditSession503JSONResponse) VisitEditSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ExportSessionCSVRequestObject struct {
 	Id     SessionID `json:"id"`
 	Params ExportSessionCSVParams
@@ -2867,6 +3119,9 @@ type StrictServerInterface interface {
 	// (GET /api/runs/{id})
 	RunByID(ctx context.Context, request RunByIDRequestObject) (RunByIDResponseObject, error)
 
+	// (PATCH /api/runs/{id})
+	EditRun(ctx context.Context, request EditRunRequestObject) (EditRunResponseObject, error)
+
 	// (GET /api/runs/{id}/export.csv)
 	ExportRunCSV(ctx context.Context, request ExportRunCSVRequestObject) (ExportRunCSVResponseObject, error)
 
@@ -2890,6 +3145,9 @@ type StrictServerInterface interface {
 
 	// (GET /api/sessions/{id})
 	SessionByID(ctx context.Context, request SessionByIDRequestObject) (SessionByIDResponseObject, error)
+
+	// (PATCH /api/sessions/{id})
+	EditSession(ctx context.Context, request EditSessionRequestObject) (EditSessionResponseObject, error)
 
 	// (GET /api/sessions/{id}/export.csv)
 	ExportSessionCSV(ctx context.Context, request ExportSessionCSVRequestObject) (ExportSessionCSVResponseObject, error)
@@ -3066,6 +3324,39 @@ func (sh *strictHandler) RunByID(w http.ResponseWriter, r *http.Request, id RunI
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RunByIDResponseObject); ok {
 		if err := validResponse.VisitRunByIDResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// EditRun operation middleware
+func (sh *strictHandler) EditRun(w http.ResponseWriter, r *http.Request, id RunID) {
+	var request EditRunRequestObject
+
+	request.Id = id
+
+	var body EditRunJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.EditRun(ctx, request.(EditRunRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "EditRun")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(EditRunResponseObject); ok {
+		if err := validResponse.VisitEditRunResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -3284,6 +3575,39 @@ func (sh *strictHandler) SessionByID(w http.ResponseWriter, r *http.Request, id 
 	}
 }
 
+// EditSession operation middleware
+func (sh *strictHandler) EditSession(w http.ResponseWriter, r *http.Request, id SessionID) {
+	var request EditSessionRequestObject
+
+	request.Id = id
+
+	var body EditSessionJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.EditSession(ctx, request.(EditSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "EditSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(EditSessionResponseObject); ok {
+		if err := validResponse.VisitEditSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ExportSessionCSV operation middleware
 func (sh *strictHandler) ExportSessionCSV(w http.ResponseWriter, r *http.Request, id SessionID, params ExportSessionCSVParams) {
 	var request ExportSessionCSVRequestObject
@@ -3470,58 +3794,62 @@ func (sh *strictHandler) Readyz(w http.ResponseWriter, r *http.Request) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"ODzhr6UXAxbSYxT6vrCq//t/AAAA//8=",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

@@ -5,7 +5,7 @@ INSERT INTO sampling_sessions (
   max_samples, max_duration_seconds, status, samples_taken, probes_ok,
   probes_total, distinct_ips, last_sample_at, last_primary_ip, last_rtt_ms,
   last_error, created_at, started_at, stopped_at, sequence_offset,
-  target_country
+  target_country, name_customized
 ) VALUES (
   sqlc.arg(id), sqlc.arg(name), sqlc.arg(proxy_ciphertext), sqlc.arg(proxy_nonce),
   sqlc.arg(proxy_display), sqlc.arg(mode), sqlc.arg(cadence_seconds),
@@ -16,7 +16,9 @@ INSERT INTO sampling_sessions (
   NULLIF(sqlc.arg(last_primary_ip)::text, '')::inet, sqlc.narg(last_rtt_ms),
   NULLIF(sqlc.arg(last_error)::text, ''), sqlc.arg(created_at),
   sqlc.narg(started_at), sqlc.narg(stopped_at), sqlc.arg(sequence_offset),
-  sqlc.arg(target_country)
+  sqlc.arg(target_country),
+  -- A standalone session is always named by the person creating it.
+  true
 );
 
 -- name: Sessions :many
@@ -81,6 +83,13 @@ SET status = 'running',
     started_at = sqlc.arg(started_at),
     stopped_at = NULL
 WHERE id = sqlc.arg(id) AND status IN ('stopped', 'finished');
+
+-- name: RenameSession :execrows
+-- Renaming records provenance: the name is now one a person chose, so a later
+-- run rename must not rewrite it back to a generated one.
+UPDATE sampling_sessions
+SET name = sqlc.arg(name), name_customized = true
+WHERE id = sqlc.arg(id);
 
 -- name: DeleteSession :exec
 DELETE FROM sampling_sessions WHERE id = sqlc.arg(id);

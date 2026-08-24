@@ -6,6 +6,7 @@ import { PoolCompositionChart } from '../components/report/composition-charts'
 import { RiskHistogram } from '../components/report/risk-histogram'
 import { LatencyChart, SuccessRateChart } from '../components/report/timeseries-charts'
 import { SessionStatusBadge } from '../components/session-status-badge'
+import { EditableTitle } from '../components/editable-title'
 import { Alert } from '../components/ui/alert'
 import { Button } from '../components/ui/button'
 import { Skeleton } from '../components/ui/skeleton'
@@ -18,6 +19,7 @@ import {
   type RunReport,
   type VariantSummary,
   useDeleteRun,
+  useEditRun,
   useReenableRun,
   useRun,
   useRunReport,
@@ -34,6 +36,7 @@ export function RunPage() {
   const stop = useStopRun()
   const reenable = useReenableRun()
   const del = useDeleteRun()
+  const edit = useEditRun()
 
   if (run.isPending) return <RunLoading />
   if (run.error instanceof APIError && run.error.status === 404) return <NotFound />
@@ -71,7 +74,7 @@ export function RunPage() {
       <Link to="/" className="breadcrumb">Runs</Link>
       <header className="session-header">
         <div className="session-title">
-          <div className="session-title-line"><h1>{detail.name}</h1><SessionStatusBadge status={detail.status} /></div>
+          <div className="session-title-line"><EditableTitle value={detail.name} label="run name" pending={edit.isPending} onSave={(name) => edit.mutateAsync({ id, name })} /><SessionStatusBadge status={detail.status} /></div>
           <p><span className="mono">{detail.template_display}</span><span aria-hidden="true"> · </span><span>{detail.variant_count} variant{detail.variant_count === 1 ? '' : 's'}</span>{targetCountry && <><span aria-hidden="true"> · </span><span>Target country <span className="mono">{targetCountry}</span> (manual)</span></>}</p>
         </div>
         <div className="session-actions">
@@ -84,6 +87,7 @@ export function RunPage() {
       {stop.isError && <Alert className="inline-alert"><AlertTriangle aria-hidden="true" /><div><strong>Could not stop run</strong><p>{errorMessage(stop.error)}</p></div></Alert>}
       {reenable.isError && <Alert className="inline-alert"><AlertTriangle aria-hidden="true" /><div><strong>Could not re-enable run</strong><p>{errorMessage(reenable.error)}</p></div></Alert>}
       {del.isError && <Alert className="inline-alert"><AlertTriangle aria-hidden="true" /><div><strong>Could not delete run</strong><p>{errorMessage(del.error)}</p></div></Alert>}
+      {edit.isError && <Alert className="inline-alert"><AlertTriangle aria-hidden="true" /><div><strong>Could not rename run</strong><p>{errorMessage(edit.error)}</p></div></Alert>}
 
       <ReportBoundary report={report}>
         {report.data && <>

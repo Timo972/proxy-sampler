@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -141,7 +140,7 @@ func (s *Server) CreateRun(ctx context.Context, request openapi.CreateRunRequest
 			return nil, internalError()
 		}
 		child := session.Session{
-			ID: uuid.New(), Name: variantName(name, variant.Params), ProxyCiphertext: ciphertext, ProxyNonce: nonce,
+			ID: uuid.New(), Name: variation.VariantName(name, variant.Params), ProxyCiphertext: ciphertext, ProxyNonce: nonce,
 			ProxyDisplay: variantDisplay, Mode: session.Mode(body.Mode),
 			Cadence: time.Duration(body.CadenceSeconds) * time.Second, ProbesPerSample: probes,
 			ProbeTarget: probeTarget, DialTimeout: dialTimeout, MaxSamples: cloneInt(body.MaxSamples),
@@ -555,24 +554,6 @@ func mapVariant(v variation.VariantSession) openapi.VariantSummary {
 		Status:        openapi.VariantSummaryStatus(v.Status), SamplesTaken: v.Snapshot.SamplesTaken,
 		DistinctIps: v.Snapshot.DistinctIPs,
 	}
-}
-
-// variantName combines the run name with a compact, deterministic suffix
-// built from the variant's sorted params so child sessions are distinguishable.
-func variantName(runName string, params map[string]string) string {
-	if len(params) == 0 {
-		return runName
-	}
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, k+"="+params[k])
-	}
-	return runName + " (" + strings.Join(parts, ",") + ")"
 }
 
 // credentialInPassword reports whether a substituted axis value landed in the

@@ -47,7 +47,7 @@ INSERT INTO sampling_sessions (
   max_samples, max_duration_seconds, status, samples_taken, probes_ok,
   probes_total, distinct_ips, last_sample_at, last_primary_ip, last_rtt_ms,
   last_error, created_at, started_at, stopped_at, sequence_offset,
-  target_country
+  target_country, name_customized
 ) VALUES (
   $1, $2, $3, $4,
   $5, $6, $7,
@@ -58,7 +58,9 @@ INSERT INTO sampling_sessions (
   NULLIF($19::text, '')::inet, $20,
   NULLIF($21::text, ''), $22,
   $23, $24, $25,
-  $26
+  $26,
+  -- A standalone session is always named by the person creating it.
+  true
 )
 `
 
@@ -146,6 +148,27 @@ type ReenableSessionParams struct {
 
 func (q *Queries) ReenableSession(ctx context.Context, arg ReenableSessionParams) (int64, error) {
 	result, err := q.db.Exec(ctx, reenableSession, arg.StartedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const renameSession = `-- name: RenameSession :execrows
+UPDATE sampling_sessions
+SET name = $1, name_customized = true
+WHERE id = $2
+`
+
+type RenameSessionParams struct {
+	Name string    `json:"name"`
+	ID   uuid.UUID `json:"id"`
+}
+
+// Renaming records provenance: the name is now one a person chose, so a later
+// run rename must not rewrite it back to a generated one.
+func (q *Queries) RenameSession(ctx context.Context, arg RenameSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, renameSession, arg.Name, arg.ID)
 	if err != nil {
 		return 0, err
 	}

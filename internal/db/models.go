@@ -67,6 +67,7 @@ type SamplingSession struct {
 	VariantParams      []byte             `json:"variant_params"`
 	CellKey            *string            `json:"cell_key"`
 	TargetCountry      string             `json:"target_country"`
+	NameCustomized     bool               `json:"name_customized"`
 }
 
 type SessionIp struct {

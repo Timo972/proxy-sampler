@@ -122,38 +122,72 @@ func (s *Server) Handler() http.Handler {
 	return openapi.HandlerWithOptions(strict, openapi.ChiServerOptions{
 		BaseRouter:       router,
 		ErrorHandlerFunc: requestErrorHandler,
-		Middlewares:      []openapi.MiddlewareFunc{validateCreateSessionRequest},
+		Middlewares:      []openapi.MiddlewareFunc{validateRequestBody},
 	})
 }
 
-// validateCreateSessionRequest caps the body size of POST /api/sessions and
-// POST /api/runs, and additionally validates the field allowlist for
-// /api/sessions (runs have a different, axes-based body shape that is
-// validated downstream in the run-expansion path instead).
-func validateCreateSessionRequest(next http.Handler) http.Handler {
+// validateRequestBody caps the body size of every route that accepts one and
+// validates its field allowlist. Without the cap the generated decoder buffers
+// the whole body before any handler validation runs, so an oversized payload
+// would allocate unbounded memory; without the allowlist the decoder silently
+// drops unknown fields and trailing data despite additionalProperties:false.
+//
+// The generated router applies this middleware inside each route's wrapper, so
+// it only ever sees requests that matched a declared route. That makes the
+// PATCH prefixes exact: the edit routes are the only PATCH routes in the spec.
+func validateRequestBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var validate func([]byte) error
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions":
-			raw, ok := readCappedBody(w, r)
-			if !ok {
-				return
-			}
-			if err := validateCreateSessionJSON(raw); err != nil {
-				requestErrorHandler(w, r, err)
-				return
-			}
+			validate = validateCreateSessionJSON
 		case r.Method == http.MethodPost && r.URL.Path == "/api/runs":
-			raw, ok := readCappedBody(w, r)
-			if !ok {
-				return
-			}
-			if err := validateCreateRunJSON(raw); err != nil {
-				requestErrorHandler(w, r, err)
-				return
-			}
+			// Runs have an axes-based body whose nested shape is validated in
+			// the run-expansion path; this checks the top-level allowlist.
+			validate = validateCreateRunJSON
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/sessions/"),
+			r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/runs/"):
+			validate = validateEditJSON
+		default:
+			next.ServeHTTP(w, r)
+			return
+		}
+		raw, ok := readCappedBody(w, r)
+		if !ok {
+			return
+		}
+		if err := validate(raw); err != nil {
+			requestErrorHandler(w, r, err)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// validateEditJSON enforces the strict shape of both edit payloads: an object
+// carrying only editable properties, no null on a property that is a string
+// when present, and no trailing data. Properties stay optional so the payload
+// can grow, but an unknown or typo'd one is refused rather than ignored.
+func validateEditJSON(raw []byte) error {
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := decoder.Decode(&fields); err != nil || fields == nil {
+		return invalidRequest()
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return invalidRequest()
+	}
+	for name, value := range fields {
+		switch name {
+		case "name":
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return invalidRequest()
+			}
+		default:
+			return invalidRequest()
+		}
+	}
+	return nil
 }
 
 // readCappedBody reads r.Body through a maxCreateSessionBodyBytes-limited

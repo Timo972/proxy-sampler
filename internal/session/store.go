@@ -23,6 +23,9 @@ type Store interface {
 	Stop(ctx context.Context, id uuid.UUID, at time.Time) error
 	Finish(ctx context.Context, id uuid.UUID, at time.Time) error
 	Reenable(ctx context.Context, id uuid.UUID, at time.Time) error
+	// Rename changes a session's display name. It never touches sampling
+	// state, so it is valid in any status.
+	Rename(ctx context.Context, id uuid.UUID, name string) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	SaveTick(ctx context.Context, id uuid.UUID, snapshot Snapshot, hits []IPHit) error
 	SessionIPs(ctx context.Context, id uuid.UUID) ([]IPRecord, error)

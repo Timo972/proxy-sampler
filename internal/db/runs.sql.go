@@ -57,7 +57,7 @@ INSERT INTO sampling_sessions (
   max_samples, max_duration_seconds, status, samples_taken, probes_ok,
   probes_total, distinct_ips, last_sample_at, last_primary_ip, last_rtt_ms,
   last_error, created_at, started_at, stopped_at, sequence_offset,
-  target_country, run_id, variant_params, cell_key
+  target_country, run_id, variant_params, cell_key, name_customized
 ) VALUES (
   $1, $2, $3, $4,
   $5, $6, $7,
@@ -68,7 +68,9 @@ INSERT INTO sampling_sessions (
   NULLIF($19::text, '')::inet, $20,
   NULLIF($21::text, ''), $22,
   $23, $24, $25,
-  $26, $27, $28, $29
+  $26, $27, $28, $29,
+  -- A child's name is generated from the run name and its params at creation.
+  false
 )
 `
 
@@ -137,6 +139,56 @@ func (q *Queries) InsertRunSession(ctx context.Context, arg InsertRunSessionPara
 		arg.CellKey,
 	)
 	return err
+}
+
+const renameGeneratedRunSession = `-- name: RenameGeneratedRunSession :execrows
+UPDATE sampling_sessions
+SET name = $1
+WHERE id = $2 AND NOT name_customized
+`
+
+type RenameGeneratedRunSessionParams struct {
+	Name string    `json:"name"`
+	ID   uuid.UUID `json:"id"`
+}
+
+// Guarded on provenance rather than on the current text, so a name a person
+// chose is never rewritten even when it coincides with what some run name would
+// generate. The guard doubles as the concurrency check: a session rename that
+// commits between the cascade's read and this write sets name_customized, so
+// the re-evaluated WHERE matches no row.
+func (q *Queries) RenameGeneratedRunSession(ctx context.Context, arg RenameGeneratedRunSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, renameGeneratedRunSession, arg.Name, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const renameRun = `-- name: RenameRun :execrows
+UPDATE variation_runs
+SET name = $1
+WHERE id = $2
+`
+
+type RenameRunParams struct {
+	Name string    `json:"name"`
+	ID   uuid.UUID `json:"id"`
+}
+
+// This UPDATE also serializes concurrent run renames: it takes the run row's
+// lock, so a second rename waits here and then reads children the first one has
+// already rewritten. Do not promote this to SELECT ... FOR UPDATE — that
+// conflicts with the KEY SHARE lock a child row update takes for its run_id
+// foreign key, and deadlocks the cascade against a concurrent session rename
+// holding the child's row lock. A plain UPDATE of a non-key column takes the
+// weaker FOR NO KEY UPDATE, which does not conflict.
+func (q *Queries) RenameRun(ctx context.Context, arg RenameRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, renameRun, arg.Name, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const runByID = `-- name: RunByID :one
@@ -275,6 +327,38 @@ func (q *Queries) RunIPObservations(ctx context.Context, arg RunIPObservationsPa
 			&i.ReputationFirstSeen,
 			&i.RefreshedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const runSessionVariantParams = `-- name: RunSessionVariantParams :many
+SELECT s.id, COALESCE(s.variant_params, '{}'::jsonb) AS variant_params
+FROM sampling_sessions AS s
+WHERE s.run_id = $1
+ORDER BY s.created_at ASC, s.id ASC
+`
+
+type RunSessionVariantParamsRow struct {
+	ID            uuid.UUID `json:"id"`
+	VariantParams []byte    `json:"variant_params"`
+}
+
+func (q *Queries) RunSessionVariantParams(ctx context.Context, runID pgtype.UUID) ([]RunSessionVariantParamsRow, error) {
+	rows, err := q.db.Query(ctx, runSessionVariantParams, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RunSessionVariantParamsRow
+	for rows.Next() {
+		var i RunSessionVariantParamsRow
+		if err := rows.Scan(&i.ID, &i.VariantParams); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
