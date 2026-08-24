@@ -137,14 +137,15 @@ func TestEditRunUpdatesName(t *testing.T) {
 	}
 }
 
-// TestEditRunRenamesOnlyGeneratedVariantNames is the cascade rule: a child that
-// still carries the name generated from the old run name follows the rename, and
-// a child renamed by hand keeps the name its user chose.
+// TestEditRunRenamesOnlyGeneratedVariantNames is the cascade rule: a generated
+// child follows the rename, and a child renamed by hand keeps the name its user
+// chose. Which is which comes from recorded provenance, not from the name's text.
 func TestEditRunRenamesOnlyGeneratedVariantNames(t *testing.T) {
 	runStore := newMemoryRunStore()
 	run := seedRun(runStore, "Alpha", map[string]string{"region": "eu"}, map[string]string{"region": "us"})
 	children := runStore.children[run]
 	children[1].Session.Name = "My custom probe"
+	runStore.customized[children[1].Session.ID] = true
 	handler := testRunHandler(t, newMemoryStore(), runStore, &fakeControl{})
 
 	response := request(t, handler, http.MethodPatch, "/api/runs/"+run.String(), `{"name":"Beta"}`)

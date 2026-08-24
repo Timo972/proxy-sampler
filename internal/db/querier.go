@@ -18,22 +18,28 @@ type Querier interface {
 	InsertRun(ctx context.Context, arg InsertRunParams) error
 	InsertRunSession(ctx context.Context, arg InsertRunSessionParams) error
 	InsertSession(ctx context.Context, arg InsertSessionParams) error
-	// FOR NO KEY UPDATE, not FOR UPDATE: renaming never changes the run's key, and
-	// the weaker mode still serializes concurrent run renames against each other
-	// while leaving the KEY SHARE lock a child row update takes for its run_id
-	// foreign key free. FOR UPDATE would block that, deadlocking this transaction
-	// against a concurrent session rename that already holds the child's row lock.
-	LockRunForRename(ctx context.Context, id uuid.UUID) (string, error)
 	ReenableSession(ctx context.Context, arg ReenableSessionParams) (int64, error)
-	// Conditional on the name the cascade read, so a session rename that commits
-	// between that read and this write is preserved rather than overwritten.
+	// Guarded on provenance rather than on the current text, so a name a person
+	// chose is never rewritten even when it coincides with what some run name would
+	// generate. The guard doubles as the concurrency check: a session rename that
+	// commits between the cascade's read and this write sets name_customized, so
+	// the re-evaluated WHERE matches no row.
 	RenameGeneratedRunSession(ctx context.Context, arg RenameGeneratedRunSessionParams) (int64, error)
-	RenameRun(ctx context.Context, arg RenameRunParams) error
+	// This UPDATE also serializes concurrent run renames: it takes the run row's
+	// lock, so a second rename waits here and then reads children the first one has
+	// already rewritten. Do not promote this to SELECT ... FOR UPDATE — that
+	// conflicts with the KEY SHARE lock a child row update takes for its run_id
+	// foreign key, and deadlocks the cascade against a concurrent session rename
+	// holding the child's row lock. A plain UPDATE of a non-key column takes the
+	// weaker FOR NO KEY UPDATE, which does not conflict.
+	RenameRun(ctx context.Context, arg RenameRunParams) (int64, error)
+	// Renaming records provenance: the name is now one a person chose, so a later
+	// run rename must not rewrite it back to a generated one.
 	RenameSession(ctx context.Context, arg RenameSessionParams) (int64, error)
 	ReputationByIP(ctx context.Context, ip string) (ReputationByIPRow, error)
 	RunByID(ctx context.Context, id uuid.UUID) (RunByIDRow, error)
 	RunIPObservations(ctx context.Context, arg RunIPObservationsParams) ([]RunIPObservationsRow, error)
-	RunSessionNames(ctx context.Context, runID pgtype.UUID) ([]RunSessionNamesRow, error)
+	RunSessionVariantParams(ctx context.Context, runID pgtype.UUID) ([]RunSessionVariantParamsRow, error)
 	RunSessions(ctx context.Context, runID pgtype.UUID) ([]RunSessionsRow, error)
 	RunningSessions(ctx context.Context) ([]RunningSessionsRow, error)
 	Runs(ctx context.Context) ([]RunsRow, error)

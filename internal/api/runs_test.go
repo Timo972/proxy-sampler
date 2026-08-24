@@ -218,6 +218,9 @@ type memoryRunStore struct {
 	streamErr            error
 	runByIDErr           error
 	renameRunErr         error
+	// customized stands in for the name_customized column the real store keeps
+	// on each session row: the set of children a person has renamed.
+	customized map[uuid.UUID]bool
 }
 
 func newMemoryRunStore() *memoryRunStore {
@@ -225,6 +228,7 @@ func newMemoryRunStore() *memoryRunStore {
 		children:     map[uuid.UUID][]variation.ChildSession{},
 		poolIPs:      map[uuid.UUID][]variation.IPRow{},
 		observations: map[uuid.UUID][]variation.IPObservation{},
+		customized:   map[uuid.UUID]bool{},
 	}
 }
 
@@ -279,8 +283,9 @@ func (m *memoryRunStore) RunIPObservations(_ context.Context, id uuid.UUID, limi
 	return obs, nil
 }
 
-// RenameRun mirrors the real store: the run is renamed, and a child follows
-// only while it still carries the name generated from the old run name.
+// RenameRun mirrors the real store: the run is renamed, and a child follows it
+// unless its name was customized, which the real store records as provenance on
+// the session row rather than inferring from the current text.
 func (m *memoryRunStore) RenameRun(_ context.Context, id uuid.UUID, name string) error {
 	if m.renameRunErr != nil {
 		return m.renameRunErr
@@ -289,18 +294,17 @@ func (m *memoryRunStore) RenameRun(_ context.Context, id uuid.UUID, name string)
 		if m.runs[i].ID != id {
 			continue
 		}
-		previous := m.runs[i].Name
 		m.runs[i].Name = name
 		children := m.children[id]
 		for j := range children {
+			if m.customized[children[j].Session.ID] {
+				continue
+			}
 			var params map[string]string
 			if len(children[j].Params) > 0 {
 				if err := json.Unmarshal(children[j].Params, &params); err != nil {
 					continue
 				}
-			}
-			if children[j].Session.Name != variation.VariantName(previous, params) {
-				continue
 			}
 			children[j].Session.Name = variation.VariantName(name, params)
 		}

@@ -10,7 +10,7 @@ INSERT INTO sampling_sessions (
   max_samples, max_duration_seconds, status, samples_taken, probes_ok,
   probes_total, distinct_ips, last_sample_at, last_primary_ip, last_rtt_ms,
   last_error, created_at, started_at, stopped_at, sequence_offset,
-  target_country, run_id, variant_params, cell_key
+  target_country, run_id, variant_params, cell_key, name_customized
 ) VALUES (
   sqlc.arg(id), sqlc.arg(name), sqlc.arg(proxy_ciphertext), sqlc.arg(proxy_nonce),
   sqlc.arg(proxy_display), sqlc.arg(mode), sqlc.arg(cadence_seconds),
@@ -21,7 +21,9 @@ INSERT INTO sampling_sessions (
   NULLIF(sqlc.arg(last_primary_ip)::text, '')::inet, sqlc.narg(last_rtt_ms),
   NULLIF(sqlc.arg(last_error)::text, ''), sqlc.arg(created_at),
   sqlc.narg(started_at), sqlc.narg(stopped_at), sqlc.arg(sequence_offset),
-  sqlc.arg(target_country), sqlc.arg(run_id), sqlc.arg(variant_params), sqlc.arg(cell_key)
+  sqlc.arg(target_country), sqlc.arg(run_id), sqlc.arg(variant_params), sqlc.arg(cell_key),
+  -- A child's name is generated from the run name and its params at creation.
+  false
 );
 
 -- name: Runs :many
@@ -84,31 +86,30 @@ WHERE s.run_id = sqlc.arg(run_id)
 ORDER BY si.last_seen DESC
 LIMIT sqlc.arg(row_limit);
 
--- name: LockRunForRename :one
--- FOR NO KEY UPDATE, not FOR UPDATE: renaming never changes the run's key, and
--- the weaker mode still serializes concurrent run renames against each other
--- while leaving the KEY SHARE lock a child row update takes for its run_id
--- foreign key free. FOR UPDATE would block that, deadlocking this transaction
--- against a concurrent session rename that already holds the child's row lock.
-SELECT run.name
-FROM variation_runs AS run
-WHERE run.id = sqlc.arg(id)
-FOR NO KEY UPDATE;
-
--- name: RenameRun :exec
+-- name: RenameRun :execrows
+-- This UPDATE also serializes concurrent run renames: it takes the run row's
+-- lock, so a second rename waits here and then reads children the first one has
+-- already rewritten. Do not promote this to SELECT ... FOR UPDATE — that
+-- conflicts with the KEY SHARE lock a child row update takes for its run_id
+-- foreign key, and deadlocks the cascade against a concurrent session rename
+-- holding the child's row lock. A plain UPDATE of a non-key column takes the
+-- weaker FOR NO KEY UPDATE, which does not conflict.
 UPDATE variation_runs
 SET name = sqlc.arg(name)
 WHERE id = sqlc.arg(id);
 
 -- name: RenameGeneratedRunSession :execrows
--- Conditional on the name the cascade read, so a session rename that commits
--- between that read and this write is preserved rather than overwritten.
+-- Guarded on provenance rather than on the current text, so a name a person
+-- chose is never rewritten even when it coincides with what some run name would
+-- generate. The guard doubles as the concurrency check: a session rename that
+-- commits between the cascade's read and this write sets name_customized, so
+-- the re-evaluated WHERE matches no row.
 UPDATE sampling_sessions
 SET name = sqlc.arg(name)
-WHERE id = sqlc.arg(id) AND name = sqlc.arg(expected_name);
+WHERE id = sqlc.arg(id) AND NOT name_customized;
 
--- name: RunSessionNames :many
-SELECT s.id, s.name, COALESCE(s.variant_params, '{}'::jsonb) AS variant_params
+-- name: RunSessionVariantParams :many
+SELECT s.id, COALESCE(s.variant_params, '{}'::jsonb) AS variant_params
 FROM sampling_sessions AS s
 WHERE s.run_id = sqlc.arg(run_id)
 ORDER BY s.created_at ASC, s.id ASC;
