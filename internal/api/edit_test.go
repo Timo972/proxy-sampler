@@ -228,3 +228,105 @@ func seedRun(store *memoryRunStore, name string, params ...map[string]string) uu
 	store.children[id] = children
 	return id
 }
+
+// TestEditRejectsOversizedBody covers the body cap on both edit routes: the
+// request is refused during the read, before the generated decoder buffers it.
+func TestEditRejectsOversizedBody(t *testing.T) {
+	const bodyLimit = 1 << 20
+	// The payload itself is valid and would rename successfully: a short name
+	// followed by trailing whitespace, which JSON permits. Only the body cap can
+	// reject it, so a 400 here cannot come from name-length validation instead.
+	oversized := `{"name":"Beta"}` + strings.Repeat(" ", bodyLimit)
+
+	t.Run("session", func(t *testing.T) {
+		store := newMemoryStore()
+		s := sampleSession()
+		store.sessions = append(store.sessions, s)
+		handler := testHandler(t, store, &fakeControl{})
+
+		response := request(t, handler, http.MethodPatch, "/api/sessions/"+s.ID.String(), oversized)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", response.Code)
+		}
+		if store.sessions[0].Name != "Existing" {
+			t.Errorf("stored name = %q, want it unchanged", store.sessions[0].Name)
+		}
+	})
+
+	t.Run("run", func(t *testing.T) {
+		runStore := newMemoryRunStore()
+		run := seedRun(runStore, "Alpha", map[string]string{"region": "eu"})
+		handler := testRunHandler(t, newMemoryStore(), runStore, &fakeControl{})
+
+		response := request(t, handler, http.MethodPatch, "/api/runs/"+run.String(), oversized)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", response.Code)
+		}
+		if runStore.runs[0].Name != "Alpha" {
+			t.Errorf("stored run name = %q, want it unchanged", runStore.runs[0].Name)
+		}
+	})
+}
+
+// TestEditSessionRejectsRuntimeSchemaViolations mirrors the create endpoints:
+// the generated decoder silently drops unknown fields and trailing data despite
+// additionalProperties:false, so the edit payload is validated explicitly.
+func TestEditSessionRejectsRuntimeSchemaViolations(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "unknown property", body: `{"name":"Beta","unexpected":true}`},
+		{name: "typoed property", body: `{"name":"Beta","nmae":"ignored"}`},
+		{name: "null name", body: `{"name":null}`},
+		{name: "trailing JSON", body: `{"name":"Beta"} {}`},
+		{name: "concatenated objects", body: `{"name":"Beta"}{"name":"Gamma"}`},
+		{name: "JSON array", body: `[{"name":"Beta"}]`},
+		{name: "JSON null", body: `null`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMemoryStore()
+			s := sampleSession()
+			store.sessions = append(store.sessions, s)
+			handler := testHandler(t, store, &fakeControl{})
+
+			response := request(t, handler, http.MethodPatch, "/api/sessions/"+s.ID.String(), tt.body)
+			assertAPIError(t, response, http.StatusBadRequest, "invalid_request")
+			if store.sessions[0].Name != "Existing" {
+				t.Errorf("stored name = %q, want it unchanged", store.sessions[0].Name)
+			}
+		})
+	}
+}
+
+func TestEditRunRejectsRuntimeSchemaViolations(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "unknown property", body: `{"name":"Beta","unexpected":true}`},
+		{name: "typoed property", body: `{"name":"Beta","nmae":"ignored"}`},
+		{name: "null name", body: `{"name":null}`},
+		{name: "trailing JSON", body: `{"name":"Beta"} {}`},
+		{name: "concatenated objects", body: `{"name":"Beta"}{"name":"Gamma"}`},
+		{name: "JSON array", body: `[{"name":"Beta"}]`},
+		{name: "JSON null", body: `null`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runStore := newMemoryRunStore()
+			run := seedRun(runStore, "Alpha", map[string]string{"region": "eu"})
+			handler := testRunHandler(t, newMemoryStore(), runStore, &fakeControl{})
+
+			response := request(t, handler, http.MethodPatch, "/api/runs/"+run.String(), tt.body)
+			assertAPIError(t, response, http.StatusBadRequest, "invalid_request")
+			if runStore.runs[0].Name != "Alpha" {
+				t.Errorf("stored run name = %q, want it unchanged", runStore.runs[0].Name)
+			}
+			if got := runStore.children[run][0].Session.Name; got != "Alpha (region=eu)" {
+				t.Errorf("variant name = %q, want it unchanged", got)
+			}
+		})
+	}
+}

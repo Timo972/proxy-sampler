@@ -239,8 +239,8 @@ func (s *Store) RenameRun(ctx context.Context, id uuid.UUID, name string) error 
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := s.q.WithTx(tx)
 
-	// Lock the run so a concurrent rename cannot slip between reading the old
-	// name and rewriting the children derived from it.
+	// Lock the run so a concurrent run rename cannot slip between reading the
+	// old name and rewriting the children derived from it.
 	previous, err := q.LockRunForRename(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -266,11 +266,17 @@ func (s *Store) RenameRun(ctx context.Context, id uuid.UUID, name string) error 
 			}
 		}
 		// Only a child still carrying the name generated from the old run name
-		// follows the rename; anything else was renamed by hand.
-		if child.Name != variation.VariantName(previous, params) {
+		// follows the rename; anything else was renamed by hand. The update
+		// repeats that check as its own WHERE clause, so a session rename
+		// committing between the read above and this write wins instead of
+		// being silently overwritten (it simply matches no row).
+		generated := variation.VariantName(previous, params)
+		if child.Name != generated {
 			continue
 		}
-		if _, err := q.RenameSession(ctx, RenameSessionParams{ID: child.ID, Name: variation.VariantName(name, params)}); err != nil {
+		if _, err := q.RenameGeneratedRunSession(ctx, RenameGeneratedRunSessionParams{
+			ID: child.ID, Name: variation.VariantName(name, params), ExpectedName: generated,
+		}); err != nil {
 			return fmt.Errorf("rename run session: %w", err)
 		}
 	}

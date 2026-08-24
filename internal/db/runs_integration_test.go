@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/timo972/proxy-sampler/internal/session"
 	"github.com/timo972/proxy-sampler/internal/variation"
@@ -255,4 +257,112 @@ func TestRenameSessionUnknownSession(t *testing.T) {
 	if !errors.Is(err, session.ErrNotFound) {
 		t.Fatalf("error = %v, want ErrNotFound", err)
 	}
+}
+
+// TestRenameRunPreservesAChildRenamedDuringTheCascade drives the real race the
+// cascade has to survive: a session-level rename that commits after RenameRun
+// has read the child's generated name but before it writes the new one.
+//
+// The interleaving is forced rather than timed. A separate transaction holds a
+// row lock on the child, so RenameRun blocks on its UPDATE after the read; the
+// holder then renames the child and commits. Under READ COMMITTED, Postgres
+// re-evaluates the blocked UPDATE against the newly committed row, so a
+// conditional update skips the child while an unconditional one clobbers it.
+func TestRenameRunPreservesAChildRenamedDuringTheCascade(t *testing.T) {
+	sessionStore := testStore(t)
+	store := sessionStore.(variation.Store)
+	ctx := context.Background()
+
+	params := map[string]string{"region": "eu"}
+	run := variation.Run{
+		ID: uuid.New(), Name: "Alpha", TemplateCiphertext: []byte("c"),
+		TemplateNonce: []byte("n"), TemplateDisplay: "gate:1080",
+		Axes:      json.RawMessage(`{"region":{"kind":"list","values":["eu"]}}`),
+		CreatedAt: nowUTC(),
+	}
+	child := testSession()
+	child.ID = uuid.New()
+	child.Name = variation.VariantName("Alpha", params)
+	if err := store.CreateRun(ctx, run, []variation.ChildSession{{
+		Session: child, Params: json.RawMessage(`{"region":"eu"}`), CellKey: `{"region":"eu"}`,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	holder, err := pgxpool.New(ctx, os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	tx, err := holder.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// Take the child's row lock without changing its value, so RenameRun still
+	// reads the generated name and only blocks once it tries to write.
+	if _, err := tx.Exec(ctx, "UPDATE sampling_sessions SET name = name WHERE id = $1", child.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	renamed := make(chan error, 1)
+	go func() { renamed <- store.RenameRun(ctx, run.ID, "Beta") }()
+
+	waitForBlockedCascadeWrite(t, ctx, holder)
+	if _, err := tx.Exec(ctx, "UPDATE sampling_sessions SET name = $1 WHERE id = $2", "My concurrent name", child.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-renamed:
+		if err != nil {
+			t.Fatalf("rename run: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("RenameRun did not finish after the lock was released")
+	}
+
+	sessions, err := store.RunSessions(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("run sessions = %d, want 1", len(sessions))
+	}
+	if sessions[0].Name != "My concurrent name" {
+		t.Errorf("child name = %q, want the concurrent rename preserved", sessions[0].Name)
+	}
+	summary, err := store.RunByID(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Name != "Beta" {
+		t.Errorf("run name = %q, want Beta (the run rename still applies)", summary.Name)
+	}
+}
+
+// waitForBlockedCascadeWrite blocks until the cascade's own child update is
+// waiting on a lock, so the test does not race the goroutine it is interleaving
+// with. It matches the statement text (sqlc keeps the query name in the SQL) so
+// a blocked query from another package sharing this database cannot be mistaken
+// for the one under test.
+func waitForBlockedCascadeWrite(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting int
+		err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity
+			WHERE wait_event_type = 'Lock' AND state = 'active'
+			  AND query LIKE '%RenameGeneratedRunSession%'`,
+		).Scan(&waiting)
+		if err == nil && waiting > 0 {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("the cascade's child update never blocked; the interleaving did not happen")
 }

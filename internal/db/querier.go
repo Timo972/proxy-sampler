@@ -18,8 +18,16 @@ type Querier interface {
 	InsertRun(ctx context.Context, arg InsertRunParams) error
 	InsertRunSession(ctx context.Context, arg InsertRunSessionParams) error
 	InsertSession(ctx context.Context, arg InsertSessionParams) error
+	// FOR NO KEY UPDATE, not FOR UPDATE: renaming never changes the run's key, and
+	// the weaker mode still serializes concurrent run renames against each other
+	// while leaving the KEY SHARE lock a child row update takes for its run_id
+	// foreign key free. FOR UPDATE would block that, deadlocking this transaction
+	// against a concurrent session rename that already holds the child's row lock.
 	LockRunForRename(ctx context.Context, id uuid.UUID) (string, error)
 	ReenableSession(ctx context.Context, arg ReenableSessionParams) (int64, error)
+	// Conditional on the name the cascade read, so a session rename that commits
+	// between that read and this write is preserved rather than overwritten.
+	RenameGeneratedRunSession(ctx context.Context, arg RenameGeneratedRunSessionParams) (int64, error)
 	RenameRun(ctx context.Context, arg RenameRunParams) error
 	RenameSession(ctx context.Context, arg RenameSessionParams) (int64, error)
 	ReputationByIP(ctx context.Context, ip string) (ReputationByIPRow, error)

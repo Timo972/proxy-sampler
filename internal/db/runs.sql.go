@@ -143,14 +143,41 @@ const lockRunForRename = `-- name: LockRunForRename :one
 SELECT run.name
 FROM variation_runs AS run
 WHERE run.id = $1
-FOR UPDATE
+FOR NO KEY UPDATE
 `
 
+// FOR NO KEY UPDATE, not FOR UPDATE: renaming never changes the run's key, and
+// the weaker mode still serializes concurrent run renames against each other
+// while leaving the KEY SHARE lock a child row update takes for its run_id
+// foreign key free. FOR UPDATE would block that, deadlocking this transaction
+// against a concurrent session rename that already holds the child's row lock.
 func (q *Queries) LockRunForRename(ctx context.Context, id uuid.UUID) (string, error) {
 	row := q.db.QueryRow(ctx, lockRunForRename, id)
 	var name string
 	err := row.Scan(&name)
 	return name, err
+}
+
+const renameGeneratedRunSession = `-- name: RenameGeneratedRunSession :execrows
+UPDATE sampling_sessions
+SET name = $1
+WHERE id = $2 AND name = $3
+`
+
+type RenameGeneratedRunSessionParams struct {
+	Name         string    `json:"name"`
+	ID           uuid.UUID `json:"id"`
+	ExpectedName string    `json:"expected_name"`
+}
+
+// Conditional on the name the cascade read, so a session rename that commits
+// between that read and this write is preserved rather than overwritten.
+func (q *Queries) RenameGeneratedRunSession(ctx context.Context, arg RenameGeneratedRunSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, renameGeneratedRunSession, arg.Name, arg.ID, arg.ExpectedName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const renameRun = `-- name: RenameRun :exec

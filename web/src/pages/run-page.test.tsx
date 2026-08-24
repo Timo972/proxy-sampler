@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
@@ -28,7 +28,11 @@ describe('RunPage', () => {
       </QueryClientProvider>,
     )
     await waitFor(() => expect(screen.getByText('poolcheck')).toBeInTheDocument())
-    expect(await screen.findByText(/40/)).toBeInTheDocument() // estimated pool size
+    // Scoped to the strip and matched exactly: an unscoped /40/ also matches the
+    // "Last updated …" clock, so it failed whenever the current minute or second
+    // happened to be 40.
+    const summary = await screen.findByRole('region', { name: 'Run summary' })
+    expect(within(summary).getByText('40')).toBeInTheDocument() // estimated pool size
   })
 
   it('shows the manual target country the honor rate is measured against', async () => {

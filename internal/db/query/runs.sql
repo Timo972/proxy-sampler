@@ -85,15 +85,27 @@ ORDER BY si.last_seen DESC
 LIMIT sqlc.arg(row_limit);
 
 -- name: LockRunForRename :one
+-- FOR NO KEY UPDATE, not FOR UPDATE: renaming never changes the run's key, and
+-- the weaker mode still serializes concurrent run renames against each other
+-- while leaving the KEY SHARE lock a child row update takes for its run_id
+-- foreign key free. FOR UPDATE would block that, deadlocking this transaction
+-- against a concurrent session rename that already holds the child's row lock.
 SELECT run.name
 FROM variation_runs AS run
 WHERE run.id = sqlc.arg(id)
-FOR UPDATE;
+FOR NO KEY UPDATE;
 
 -- name: RenameRun :exec
 UPDATE variation_runs
 SET name = sqlc.arg(name)
 WHERE id = sqlc.arg(id);
+
+-- name: RenameGeneratedRunSession :execrows
+-- Conditional on the name the cascade read, so a session rename that commits
+-- between that read and this write is preserved rather than overwritten.
+UPDATE sampling_sessions
+SET name = sqlc.arg(name)
+WHERE id = sqlc.arg(id) AND name = sqlc.arg(expected_name);
 
 -- name: RunSessionNames :many
 SELECT s.id, s.name, COALESCE(s.variant_params, '{}'::jsonb) AS variant_params
