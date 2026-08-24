@@ -103,8 +103,8 @@ func mapCells(cells []variation.CellReport) []openapi.CellReport {
 		params := map[string]string{}
 		_ = json.Unmarshal(cell.Params, &params)
 		result = append(result, openapi.CellReport{
-			CellKey: cell.CellKey, Params: params, VariantCount: cell.VariantCount,
-			DistinctIps: cell.DistinctIPs, HonorRate: cell.HonorRate,
+			CellKey: cell.CellKey, Params: params, TargetCountry: optionalString(cell.TargetCountry),
+			VariantCount: cell.VariantCount, DistinctIps: cell.DistinctIPs, HonorRate: cell.HonorRate,
 			Composition: openapi.PoolComposition{
 				Mobile: cell.Composition.Mobile, Residential: cell.Composition.Residential,
 				Datacenter: cell.Composition.Datacenter, Unknown: cell.Composition.Unknown,

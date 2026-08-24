@@ -353,6 +353,7 @@ export interface CreateRunRequest {
 export interface CellReport {
   cell_key: string
   params: Record<string, string>
+  target_country?: string | null
   variant_count: number
   distinct_ips: number
   honor_rate?: number | null

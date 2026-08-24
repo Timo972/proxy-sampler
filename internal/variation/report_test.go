@@ -181,6 +181,23 @@ func TestBuildPoolReportHonorTargetCountryOverridesAxis(t *testing.T) {
 	if report.HonorRate == nil || *report.HonorRate != 0 {
 		t.Fatalf("honor rate = %v, want 0 (manual target us overrides axis de; observed DE)", report.HonorRate)
 	}
+	// The cell must disclose the target its honor rate was measured against —
+	// its params still say country=de, which the override just ignored.
+	if len(report.Cells) != 1 || report.Cells[0].TargetCountry != "us" {
+		t.Fatalf("cells = %+v, want one cell carrying target country us", report.Cells)
+	}
+}
+
+func TestBuildPoolReportCellsCarryTargetCountryWithoutAxis(t *testing.T) {
+	s1 := uuid.New()
+	variants := []VariantSession{
+		{SessionID: s1, CellKey: `{}`, Params: json.RawMessage(`{"session":"abc"}`), TargetCountry: "de", Snapshot: session.Snapshot{SamplesTaken: 1}},
+	}
+	obs := []IPObservation{{SessionID: s1, IP: netip.MustParseAddr("9.9.9.5"), HitCount: 1, Reputation: rep("DE", "", "residential")}}
+	report := BuildPoolReport(variants, obs)
+	if len(report.Cells) != 1 || report.Cells[0].TargetCountry != "de" {
+		t.Fatalf("cells = %+v, want one cell carrying target country de", report.Cells)
+	}
 }
 
 func TestBuildPoolReportHonorUnknownWhenNoTarget(t *testing.T) {

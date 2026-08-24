@@ -51,6 +51,8 @@ export function RunPage() {
   }
 
   const { run: detail, variants } = run.data
+  // Every child of a run shares one manual target country, set at creation.
+  const targetCountry = variants.find((v) => v.target_country)?.target_country
 
   const confirmStop = () => {
     if (window.confirm(`Stop “${detail.name}”? You can re-enable it later.`)) stop.mutate(id)
@@ -70,7 +72,7 @@ export function RunPage() {
       <header className="session-header">
         <div className="session-title">
           <div className="session-title-line"><h1>{detail.name}</h1><SessionStatusBadge status={detail.status} /></div>
-          <p><span className="mono">{detail.template_display}</span><span aria-hidden="true"> · </span><span>{detail.variant_count} variant{detail.variant_count === 1 ? '' : 's'}</span></p>
+          <p><span className="mono">{detail.template_display}</span><span aria-hidden="true"> · </span><span>{detail.variant_count} variant{detail.variant_count === 1 ? '' : 's'}</span>{targetCountry && <><span aria-hidden="true"> · </span><span>Target country <span className="mono">{targetCountry}</span> (manual)</span></>}</p>
         </div>
         <div className="session-actions">
           {detail.status === 'running' && <Button type="button" variant="danger" onClick={confirmStop} disabled={stop.isPending}><Square size={14} fill="currentColor" aria-hidden="true" />{stop.isPending ? 'Stopping…' : 'Stop run'}</Button>}
@@ -140,7 +142,7 @@ function CellTable({ cells }: { cells: CellReport[] }) {
         <TableBody>
           {sorted.map((cell) => (
             <TableRow key={cell.cell_key}>
-              <TableCell className="mono compact-cell">{formatParams(cell.params)}</TableCell>
+              <TableCell className="mono compact-cell">{formatParams(cell.params)}{cell.target_country && <span className="muted"> · target {cell.target_country} (manual)</span>}</TableCell>
               <TableCell className="numeric">{cell.variant_count}</TableCell>
               <TableCell className="numeric">{cell.distinct_ips}</TableCell>
               <TableCell className="numeric">{cell.honor_rate == null ? '—' : formatPercent(cell.honor_rate)}</TableCell>

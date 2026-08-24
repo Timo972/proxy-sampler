@@ -650,6 +650,7 @@ components:
       required: [cell_key, params, variant_count, distinct_ips, composition]
       properties:
         cell_key: {type: string}
+        target_country: {type: string, nullable: true}
         params:
           type: object
           additionalProperties: {type: string}
