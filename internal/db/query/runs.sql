@@ -10,7 +10,7 @@ INSERT INTO sampling_sessions (
   max_samples, max_duration_seconds, status, samples_taken, probes_ok,
   probes_total, distinct_ips, last_sample_at, last_primary_ip, last_rtt_ms,
   last_error, created_at, started_at, stopped_at, sequence_offset,
-  run_id, variant_params, cell_key
+  target_country, run_id, variant_params, cell_key
 ) VALUES (
   sqlc.arg(id), sqlc.arg(name), sqlc.arg(proxy_ciphertext), sqlc.arg(proxy_nonce),
   sqlc.arg(proxy_display), sqlc.arg(mode), sqlc.arg(cadence_seconds),
@@ -21,7 +21,7 @@ INSERT INTO sampling_sessions (
   NULLIF(sqlc.arg(last_primary_ip)::text, '')::inet, sqlc.narg(last_rtt_ms),
   NULLIF(sqlc.arg(last_error)::text, ''), sqlc.arg(created_at),
   sqlc.narg(started_at), sqlc.narg(stopped_at), sqlc.arg(sequence_offset),
-  sqlc.arg(run_id), sqlc.arg(variant_params), sqlc.arg(cell_key)
+  sqlc.arg(target_country), sqlc.arg(run_id), sqlc.arg(variant_params), sqlc.arg(cell_key)
 );
 
 -- name: Runs :many
@@ -57,7 +57,7 @@ GROUP BY run.id;
 -- name: RunSessions :many
 SELECT
   s.id, s.name, COALESCE(s.variant_params, '{}'::jsonb) AS variant_params,
-  COALESCE(s.cell_key, '') AS cell_key, s.status,
+  COALESCE(s.cell_key, '') AS cell_key, s.target_country, s.status,
   s.samples_taken, s.probes_ok, s.probes_total, s.distinct_ips
 FROM sampling_sessions AS s
 WHERE s.run_id = sqlc.arg(run_id)

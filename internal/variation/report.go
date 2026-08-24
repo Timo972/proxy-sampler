@@ -47,12 +47,17 @@ type IPRow struct {
 
 // CellReport summarizes one parameter cell (params minus random axes).
 type CellReport struct {
-	CellKey      string
-	Params       json.RawMessage
-	VariantCount int
-	DistinctIPs  int
-	HonorRate    *float64
-	Composition  Composition
+	CellKey string
+	Params  json.RawMessage
+	// TargetCountry is the manual target the cell's honor rate was measured
+	// against, when one was set on the run. Params may still name a country
+	// axis value the override ignored, so reports must not present the honor
+	// rate as measuring the params country when this is set.
+	TargetCountry string
+	VariantCount  int
+	DistinctIPs   int
+	HonorRate     *float64
+	Composition   Composition
 }
 
 // PoolReport is the aggregated, IP-deduped view over a whole run.
@@ -164,13 +169,14 @@ func boolValue(value *bool) bool { return value != nil && *value }
 
 func buildHonorAndCells(variants []VariantSession, sessionObs map[uuid.UUID][]IPObservation) (*float64, []CellReport) {
 	type cellAccum struct {
-		key          string
-		params       json.RawMessage
-		variantCount int
-		honored      int
-		sampled      int
-		ips          map[netip.Addr]struct{}
-		composition  Composition
+		key           string
+		params        json.RawMessage
+		targetCountry string
+		variantCount  int
+		honored       int
+		sampled       int
+		ips           map[netip.Addr]struct{}
+		composition   Composition
 	}
 	order := []string{}
 	cells := map[string]*cellAccum{}
@@ -188,6 +194,11 @@ func buildHonorAndCells(variants []VariantSession, sessionObs map[uuid.UUID][]IP
 			order = append(order, v.CellKey)
 		}
 		accum.variantCount++
+		// All of a run's children share one manual target, so the first
+		// non-empty value is the cell's effective override.
+		if accum.targetCountry == "" {
+			accum.targetCountry = v.TargetCountry
+		}
 		obs := sessionObs[v.SessionID]
 		for _, o := range obs {
 			if _, seen := accum.ips[o.IP]; !seen {
@@ -202,7 +213,7 @@ func buildHonorAndCells(variants []VariantSession, sessionObs map[uuid.UUID][]IP
 		// un-reputed variant as a mismatch. Observation presence — not the
 		// per-run SamplesTaken counter, which a re-enable resets — drives this,
 		// so already-observed variants survive a re-enable.
-		switch variantHonor(v.Params, obs) {
+		switch variantHonor(v.Params, v.TargetCountry, obs) {
 		case honorMatch:
 			accum.sampled++
 			accum.honored++
@@ -218,8 +229,8 @@ func buildHonorAndCells(variants []VariantSession, sessionObs map[uuid.UUID][]IP
 	for _, key := range order {
 		accum := cells[key]
 		cell := CellReport{
-			CellKey: accum.key, Params: accum.params, VariantCount: accum.variantCount,
-			DistinctIPs: len(accum.ips), Composition: accum.composition,
+			CellKey: accum.key, Params: accum.params, TargetCountry: accum.targetCountry,
+			VariantCount: accum.variantCount, DistinctIPs: len(accum.ips), Composition: accum.composition,
 		}
 		if accum.sampled > 0 {
 			rate := float64(accum.honored) / float64(accum.sampled)
@@ -249,11 +260,16 @@ const (
 // observed values across the variant's IPs. It returns honorUnknown when there
 // is nothing to compare — no target, or no known observed value for the target
 // — so such variants can be excluded from the honor-rate denominator rather
-// than silently counted as honored (100%) or as a mismatch.
-func variantHonor(params json.RawMessage, obs []IPObservation) honorOutcome {
+// than silently counted as honored (100%) or as a mismatch. A non-empty
+// targetCountry (the manually declared target) overrides any country axis
+// param.
+func variantHonor(params json.RawMessage, targetCountry string, obs []IPObservation) honorOutcome {
 	requested := map[string]string{}
 	_ = json.Unmarshal(params, &requested)
 	country := firstParam(requested, "country", "cc")
+	if targetCountry != "" {
+		country = targetCountry
+	}
 	isp := firstParam(requested, "isp")
 	if country == "" && isp == "" {
 		return honorUnknown

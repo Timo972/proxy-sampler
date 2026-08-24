@@ -38,11 +38,16 @@ type Session struct {
 	MaxSamples      *int
 	MaxDuration     *time.Duration
 	Status          Status
-	SequenceOffset  int
-	Snapshot        Snapshot
-	CreatedAt       time.Time
-	StartedAt       *time.Time
-	StoppedAt       *time.Time
+	// TargetCountry is a manually declared target country (ISO 3166-1 alpha-2,
+	// uppercase; empty = unset). It records intent the proxy config itself does
+	// not encode, and overrides any country parsed from the proxy username or a
+	// run's country axis when comparing requested vs observed egress.
+	TargetCountry  string
+	SequenceOffset int
+	Snapshot       Snapshot
+	CreatedAt      time.Time
+	StartedAt      *time.Time
+	StoppedAt      *time.Time
 }
 
 type Snapshot struct {

@@ -53,6 +53,9 @@ func TestCreateRunPersistsChildren(t *testing.T) {
 	if len(sessions) != 1 || sessions[0].CellKey != `{"country":"de"}` {
 		t.Fatalf("run sessions = %#v", sessions)
 	}
+	if sessions[0].TargetCountry != "DE" {
+		t.Fatalf("run session target country = %q, want DE (from child session row)", sessions[0].TargetCountry)
+	}
 
 	// Child is excluded from the standalone session list.
 	standalone, err := sessionStore.Sessions(ctx)

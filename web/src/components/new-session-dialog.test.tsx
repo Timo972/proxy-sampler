@@ -68,6 +68,38 @@ describe('NewSessionDialog', () => {
     expect(body.max_duration_seconds).toBe(3600)
   })
 
+  it('validates and submits the manual target country', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(createdSession)))
+    renderDialog()
+    const user = userEvent.setup()
+    await fillRequired(user)
+    await user.click(screen.getByRole('button', { name: 'Advanced settings' }))
+    const target = screen.getByLabelText('Target country (optional)')
+
+    await user.type(target, 'usa')
+    await user.click(screen.getByRole('button', { name: 'Start session' }))
+    expect(await screen.findByText('Enter a 2-letter country code or leave blank')).toBeInTheDocument()
+    expect(fetch).not.toHaveBeenCalled()
+
+    await user.clear(target)
+    await user.type(target, 'de')
+    await user.click(screen.getByRole('button', { name: 'Start session' }))
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+    const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+    expect(body.target_country).toBe('de')
+  })
+
+  it('omits target_country when the field is left blank', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(createdSession)))
+    renderDialog()
+    const user = userEvent.setup()
+    await fillRequired(user)
+    await user.click(screen.getByRole('button', { name: 'Start session' }))
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+    const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+    expect('target_country' in body).toBe(false)
+  })
+
   it('clears the secret immediately, disables controls, then closes and navigates on success', async () => {
     let resolveRequest!: (response: Response) => void
     const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => new Promise<Response>((resolve) => { resolveRequest = resolve }))

@@ -56,8 +56,13 @@ type VariantSession struct {
 	Name      string
 	Params    json.RawMessage
 	CellKey   string
-	Status    session.Status
-	Snapshot  session.Snapshot
+	// TargetCountry is the manually declared target country (ISO 3166-1
+	// alpha-2). When set it overrides any country axis param for honor
+	// evaluation; runs whose template encodes no country axis have no other
+	// requested-country signal.
+	TargetCountry string
+	Status        session.Status
+	Snapshot      session.Snapshot
 }
 
 // IPObservation is one child session observing one exit IP, with reputation.

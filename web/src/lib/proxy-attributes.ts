@@ -88,8 +88,11 @@ function dominantCountry(ips: IPRow[]): { code: string; share: number } | undefi
   let sum = 0
   for (const ip of ips) {
     if (!ip.country) continue
+    // Bucket case-insensitively: a mixed-case code in the reputation data must
+    // not split the vote and downgrade a true match to partial.
+    const code = ip.country.toUpperCase()
     const weight = ip.hit_count > 0 ? ip.hit_count : 1
-    totals.set(ip.country, (totals.get(ip.country) ?? 0) + weight)
+    totals.set(code, (totals.get(code) ?? 0) + weight)
     sum += weight
   }
   if (sum === 0) return undefined
@@ -129,15 +132,28 @@ function pct(share: number): string {
   return `${Math.round(share * 100)}%`
 }
 
-export function compareAttributes(parsed: ParsedAttributes, report: SessionReport | undefined): ComparisonRow[] {
+export function compareAttributes(parsed: ParsedAttributes, report: SessionReport | undefined, targetCountry?: string | null): ComparisonRow[] {
   const rows: ComparisonRow[] = []
 
+  // A manually declared target country overrides any country parsed from the
+  // username; it is the only requested-country signal for proxies whose config
+  // does not encode one.
   const country = attribute(parsed, 'country')
-  if (country) {
-    const requested = country.value.toUpperCase()
+  const manual = targetCountry?.trim().toUpperCase() || ''
+  if (country || manual) {
+    const usernameCode = country ? country.value.toUpperCase() : ''
+    const code = manual || usernameCode
+    // When the manual target contradicts a username-encoded country, surface
+    // the overridden value too — a mismatch verdict against a hidden config
+    // country would send the operator debugging the wrong side.
+    const requested = manual
+      ? usernameCode && usernameCode !== manual
+        ? `${manual} (manual, overrides ${usernameCode})`
+        : `${manual} (manual)`
+      : usernameCode
     const observed = report ? dominantCountry(report.ips) : undefined
     rows.push(observed
-      ? { label: 'Country', requested, observed: `${observed.code} (${pct(observed.share)})`, verdict: observed.code.toUpperCase() === requested ? (observed.share >= 0.9 ? 'match' : 'partial') : 'mismatch' }
+      ? { label: 'Country', requested, observed: `${observed.code} (${pct(observed.share)})`, verdict: observed.code.toUpperCase() === code ? (observed.share >= 0.9 ? 'match' : 'partial') : 'mismatch' }
       : { label: 'Country', requested, observed: '—', verdict: 'unknown' })
   }
 

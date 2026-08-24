@@ -359,7 +359,7 @@ func testSession() session.Session {
 		Mode: session.ModeSticky, Cadence: 30 * time.Second, ProbesPerSample: 3,
 		ProbeTarget: "https://example.com/trace", DialTimeout: 5 * time.Second,
 		MaxSamples: &maxSamples, MaxDuration: &maxDuration, Status: session.StatusRunning,
-		CreatedAt: now, StartedAt: &started,
+		TargetCountry: "DE", CreatedAt: now, StartedAt: &started,
 	}
 }
 
@@ -370,6 +370,7 @@ func assertSession(t *testing.T, got, want session.Session) {
 		got.Cadence != want.Cadence || got.ProbesPerSample != want.ProbesPerSample || got.ProbeTarget != want.ProbeTarget ||
 		got.DialTimeout != want.DialTimeout || !reflect.DeepEqual(got.MaxSamples, want.MaxSamples) ||
 		!reflect.DeepEqual(got.MaxDuration, want.MaxDuration) || got.Status != want.Status ||
+		got.TargetCountry != want.TargetCountry ||
 		!got.CreatedAt.Equal(want.CreatedAt) || !timePtrEqual(got.StartedAt, want.StartedAt) ||
 		!timePtrEqual(got.StoppedAt, want.StoppedAt) {
 		t.Fatalf("session mismatch\n got: %#v\nwant: %#v", got, want)

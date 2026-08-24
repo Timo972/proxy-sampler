@@ -25,6 +25,7 @@ const formSchema = z.object({
   dialTimeout: z.string().regex(positiveInteger, 'Timeout must be a positive integer').refine((value) => Number(value) >= 100, 'Timeout must be at least 100 ms'),
   maxSamples: z.string().refine((value) => value === '' || positiveInteger.test(value), 'Enter a positive integer or leave blank'),
   maxDuration: z.string().refine((value) => value === '' || positiveInteger.test(value), 'Enter a positive integer or leave blank'),
+  targetCountry: z.string().trim().refine((value) => value === '' || /^[A-Za-z]{2}$/.test(value), 'Enter a 2-letter country code or leave blank'),
 })
 
 type FormValues = z.input<typeof formSchema>
@@ -40,6 +41,7 @@ const defaults: FormValues = {
   dialTimeout: '10000',
   maxSamples: '',
   maxDuration: '',
+  targetCountry: '',
 }
 
 export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -74,6 +76,7 @@ export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpen
       ...(values.dialTimeout ? { dial_timeout_ms: Number(values.dialTimeout) } : {}),
       ...(values.maxSamples ? { max_samples: Number(values.maxSamples) } : {}),
       ...(values.maxDuration ? { max_duration_seconds: Number(values.maxDuration) } : {}),
+      ...(values.targetCountry ? { target_country: values.targetCountry } : {}),
     }
     form.resetField('proxy', { defaultValue: '' })
     try {
@@ -173,6 +176,9 @@ export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpen
                     <Input id="max-duration" type="number" min="1" inputMode="numeric" {...form.register('maxDuration')} />
                   </Field>
                 </div>
+                <Field label="Target country (optional)" error={form.formState.errors.targetCountry?.message} hint="2-letter code, e.g. DE. Declares the intended egress country when the proxy config does not encode one; overrides a country parsed from the username.">
+                  <Input id="target-country" spellCheck={false} placeholder="DE" {...form.register('targetCountry')} />
+                </Field>
               </CollapsibleContent>
             </Collapsible>
           </fieldset>

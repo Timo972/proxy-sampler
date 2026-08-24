@@ -103,6 +103,53 @@ func TestCreateSessionUsesExplicitTargetTimeoutAndCaps(t *testing.T) {
 	}
 }
 
+func TestCreateSessionPersistsTargetCountry(t *testing.T) {
+	store := newMemoryStore()
+	handler := testHandler(t, store, &fakeControl{})
+	body := `{"name":"Geo","proxy":"` + testProxy + `","mode":"sticky","cadence_seconds":30,"target_country":"de"}`
+
+	response := request(t, handler, http.MethodPost, "/api/sessions", body)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", response.Code, response.Body.String())
+	}
+	if store.sessions[0].TargetCountry != "DE" {
+		t.Errorf("target country = %q, want DE (normalized uppercase)", store.sessions[0].TargetCountry)
+	}
+	if !strings.Contains(response.Body.String(), `"target_country":"DE"`) {
+		t.Errorf("response missing target_country: %s", response.Body.String())
+	}
+}
+
+func TestCreateSessionRejectsInvalidTargetCountry(t *testing.T) {
+	for _, value := range []string{"deu", "d", "d1", "**"} {
+		store := newMemoryStore()
+		handler := testHandler(t, store, &fakeControl{})
+		body := `{"name":"Geo","proxy":"` + testProxy + `","mode":"sticky","cadence_seconds":30,"target_country":"` + value + `"}`
+		response := request(t, handler, http.MethodPost, "/api/sessions", body)
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("target_country %q: status = %d, want 400", value, response.Code)
+		}
+		if len(store.sessions) != 0 {
+			t.Errorf("target_country %q: session persisted despite invalid value", value)
+		}
+	}
+}
+
+func TestSessionByIDOmitsUnsetTargetCountry(t *testing.T) {
+	store := newMemoryStore()
+	handler := testHandler(t, store, &fakeControl{})
+	seeded := sampleSession()
+	store.sessions = append(store.sessions, seeded)
+
+	response := request(t, handler, http.MethodGet, "/api/sessions/"+seeded.ID.String(), "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	if strings.Contains(response.Body.String(), "target_country") {
+		t.Errorf("unset target_country should be omitted: %s", response.Body.String())
+	}
+}
+
 func TestCreateSessionRejectsMalformedProxyBeforeEncryption(t *testing.T) {
 	store := newMemoryStore()
 	server := NewServer(store, &fakeControl{}, nil, Defaults{ProbeTarget: testProbeTarget, DialTimeout: 10 * time.Second}, nil, 128)

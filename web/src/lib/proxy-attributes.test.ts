@@ -87,6 +87,57 @@ describe('compareAttributes', () => {
     expect(isp.verdict).toBe('match')
   })
 
+  it('compares against a manual target country when the username has none', () => {
+    const rows = compareAttributes(parseProxyAttributes('session-ab12'), report, 'US')
+    const country = rows.find((r) => r.label === 'Country')!
+    expect(country.requested).toContain('US')
+    expect(country.requested).toContain('manual')
+    expect(country.observed).toContain('US')
+    expect(country.verdict).toBe('match')
+  })
+
+  it('lets a manual target country override the username country', () => {
+    const rows = compareAttributes(parseProxyAttributes('country-us'), report, 'DE')
+    const country = rows.find((r) => r.label === 'Country')!
+    expect(country.requested).toContain('DE')
+    // Dominant observed is US, so the overriding manual target de mismatches.
+    expect(country.verdict).toBe('mismatch')
+  })
+
+  it('notes the username country that a conflicting manual target overrides', () => {
+    const rows = compareAttributes(parseProxyAttributes('country-us'), report, 'DE')
+    const country = rows.find((r) => r.label === 'Country')!
+    expect(country.requested).toContain('DE (manual, overrides US)')
+  })
+
+  it('does not claim an override when the manual target equals the username country', () => {
+    const rows = compareAttributes(parseProxyAttributes('country-de'), report, 'DE')
+    const country = rows.find((r) => r.label === 'Country')!
+    expect(country.requested).toBe('DE (manual)')
+  })
+
+  it('buckets observed country codes case-insensitively for the dominant share', () => {
+    const mixedCase: SessionReport = {
+      ...report,
+      ips: [
+        { ip: '203.0.113.1', category: 'residential', country: 'DE', isp: '', asn: '', risk_score: null, greynoise_class: '', dnsbl_listed: false, dnsbl_hits: [], first_seen: '', last_seen: '', hit_count: 6 },
+        { ip: '203.0.113.2', category: 'residential', country: 'de', isp: '', asn: '', risk_score: null, greynoise_class: '', dnsbl_listed: false, dnsbl_hits: [], first_seen: '', last_seen: '', hit_count: 5 },
+      ],
+    }
+    const rows = compareAttributes(parseProxyAttributes(''), mixedCase, 'DE')
+    const country = rows.find((r) => r.label === 'Country')!
+    // All traffic is DE; a case-split vote must not downgrade the verdict.
+    expect(country.observed).toContain('100%')
+    expect(country.verdict).toBe('match')
+  })
+
+  it('reports an unknown verdict for a manual target with no observations', () => {
+    const rows = compareAttributes(parseProxyAttributes(''), { ...report, ips: [] }, 'DE')
+    const country = rows.find((r) => r.label === 'Country')!
+    expect(country.observed).toBe('—')
+    expect(country.verdict).toBe('unknown')
+  })
+
   it('marks a country request as partial when the dominant share is below the match threshold', () => {
     const mixedReport: SessionReport = {
       ...report,

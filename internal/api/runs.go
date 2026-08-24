@@ -74,6 +74,10 @@ func (s *Server) CreateRun(ctx context.Context, request openapi.CreateRunRequest
 		!validOptionalPersistedInteger(body.MaxSamples) || !validOptionalPersistedInteger(body.MaxDurationSeconds) {
 		return nil, invalidRequest()
 	}
+	targetCountry, ok := normalizedTargetCountry(body.TargetCountry)
+	if !ok {
+		return nil, invalidRequest()
+	}
 
 	if s.runStore == nil || s.cipher == nil || s.store == nil || s.control == nil {
 		return nil, internalError()
@@ -142,7 +146,7 @@ func (s *Server) CreateRun(ctx context.Context, request openapi.CreateRunRequest
 			Cadence: time.Duration(body.CadenceSeconds) * time.Second, ProbesPerSample: probes,
 			ProbeTarget: probeTarget, DialTimeout: dialTimeout, MaxSamples: cloneInt(body.MaxSamples),
 			MaxDuration: secondsPointer(body.MaxDurationSeconds), Status: session.StatusRunning,
-			CreatedAt: now, StartedAt: timePointer(now),
+			TargetCountry: targetCountry, CreatedAt: now, StartedAt: timePointer(now),
 		}
 		children = append(children, variation.ChildSession{Session: child, Params: paramsJSON, CellKey: variant.CellKey})
 	}
@@ -547,7 +551,8 @@ func mapVariant(v variation.VariantSession) openapi.VariantSummary {
 	_ = json.Unmarshal(v.Params, &params)
 	return openapi.VariantSummary{
 		SessionId: v.SessionID, Name: v.Name, CellKey: v.CellKey, Params: params,
-		Status: openapi.VariantSummaryStatus(v.Status), SamplesTaken: v.Snapshot.SamplesTaken,
+		TargetCountry: optionalString(v.TargetCountry),
+		Status:        openapi.VariantSummaryStatus(v.Status), SamplesTaken: v.Snapshot.SamplesTaken,
 		DistinctIps: v.Snapshot.DistinctIPs,
 	}
 }

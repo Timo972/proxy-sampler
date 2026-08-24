@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -181,7 +182,7 @@ func validateCreateSessionJSON(raw []byte) error {
 	}
 	for name, value := range fields {
 		switch name {
-		case "name", "proxy", "mode", "cadence_seconds", "max_samples", "max_duration_seconds":
+		case "name", "proxy", "mode", "cadence_seconds", "max_samples", "max_duration_seconds", "target_country":
 		case "probes_per_sample", "probe_target", "dial_timeout_ms":
 			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 				return invalidRequest()
@@ -209,7 +210,7 @@ func validateCreateRunJSON(raw []byte) error {
 	}
 	for name, value := range fields {
 		switch name {
-		case "name", "template", "mode", "cadence_seconds", "max_samples", "max_duration_seconds":
+		case "name", "template", "mode", "cadence_seconds", "max_samples", "max_duration_seconds", "target_country":
 		case "probes_per_sample", "probe_target", "dial_timeout_ms":
 			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 				return invalidRequest()
@@ -290,6 +291,10 @@ func (s *Server) CreateSession(ctx context.Context, request openapi.CreateSessio
 		!validOptionalPersistedInteger(body.MaxSamples) || !validOptionalPersistedInteger(body.MaxDurationSeconds) {
 		return nil, invalidRequest()
 	}
+	targetCountry, ok := normalizedTargetCountry(body.TargetCountry)
+	if !ok {
+		return nil, invalidRequest()
+	}
 
 	proxyDisplay, err := proxydial.Display(*body.Proxy)
 	if err != nil {
@@ -309,7 +314,7 @@ func (s *Server) CreateSession(ctx context.Context, request openapi.CreateSessio
 		Cadence: time.Duration(body.CadenceSeconds) * time.Second, ProbesPerSample: probes,
 		ProbeTarget: probeTarget, DialTimeout: dialTimeout, MaxSamples: cloneInt(body.MaxSamples),
 		MaxDuration: secondsPointer(body.MaxDurationSeconds), Status: session.StatusRunning,
-		CreatedAt: now, StartedAt: timePointer(now),
+		TargetCountry: targetCountry, CreatedAt: now, StartedAt: timePointer(now),
 	}
 	created, err := s.store.Create(ctx, value)
 	if err != nil {
@@ -482,15 +487,38 @@ func mapSession(value session.Session) openapi.Session {
 		lastPrimaryIP := value.Snapshot.LastPrimaryIP.String()
 		result.LastPrimaryIp = &lastPrimaryIP
 	}
-	if value.Snapshot.LastCategory != "" {
-		lastCategory := value.Snapshot.LastCategory
-		result.LastPrimaryCategory = &lastCategory
-	}
-	if value.Snapshot.LastError != "" {
-		lastError := value.Snapshot.LastError
-		result.LastError = &lastError
-	}
+	result.LastPrimaryCategory = optionalString(value.Snapshot.LastCategory)
+	result.LastError = optionalString(value.Snapshot.LastError)
+	result.TargetCountry = optionalString(value.TargetCountry)
 	return result
+}
+
+// optionalString maps an empty-means-unset string to the pointer shape of the
+// generated response types: nil when empty, otherwise a pointer to a copy.
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+// targetCountryPattern mirrors the target_country schema in api/openapi.yaml
+// (sans the optional-empty alternative, which normalizedTargetCountry treats
+// as unset before matching).
+var targetCountryPattern = regexp.MustCompile(`^[A-Za-z]{2}$`)
+
+// normalizedTargetCountry validates an optional manual target country: unset
+// (nil or empty) is fine, otherwise it must be a 2-letter ISO 3166-1 alpha-2
+// code, normalized to uppercase for storage so comparisons and display are
+// uniform regardless of how the operator typed it.
+func normalizedTargetCountry(value *string) (string, bool) {
+	if value == nil || *value == "" {
+		return "", true
+	}
+	if !targetCountryPattern.MatchString(*value) {
+		return "", false
+	}
+	return strings.ToUpper(*value), true
 }
 
 func durationSeconds(value *time.Duration) *int {

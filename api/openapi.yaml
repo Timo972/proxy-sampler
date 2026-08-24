@@ -372,6 +372,7 @@ components:
         dial_timeout_ms: {type: integer, minimum: 100, maximum: 2147483647, default: 10000}
         max_samples: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
         max_duration_seconds: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
+        target_country: {type: string, pattern: '^([A-Za-z]{2})?$', nullable: true}
     Session:
       type: object
       required: [id, name, proxy_display, mode, status, cadence_seconds, probes_per_sample,
@@ -382,6 +383,7 @@ components:
         name: {type: string}
         proxy_display: {type: string}
         proxy_username: {type: string, nullable: true}
+        target_country: {type: string, nullable: true}
         mode: {type: string, enum: [sticky, pool]}
         status: {type: string, enum: [running, stopped, finished]}
         cadence_seconds: {type: integer, minimum: 1, maximum: 2147483647}
@@ -604,6 +606,7 @@ components:
         dial_timeout_ms: {type: integer, minimum: 100, maximum: 2147483647, default: 10000}
         max_samples: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
         max_duration_seconds: {type: integer, minimum: 1, maximum: 2147483647, nullable: true}
+        target_country: {type: string, pattern: '^([A-Za-z]{2})?$', nullable: true}
     RunConfig:
       type: object
       required: [max_variants_per_run]
@@ -630,6 +633,7 @@ components:
         params:
           type: object
           additionalProperties: {type: string}
+        target_country: {type: string, nullable: true}
         status: {type: string, enum: [running, stopped, finished]}
         samples_taken: {type: integer, minimum: 0}
         distinct_ips: {type: integer, minimum: 0}
@@ -646,6 +650,7 @@ components:
       required: [cell_key, params, variant_count, distinct_ips, composition]
       properties:
         cell_key: {type: string}
+        target_country: {type: string, nullable: true}
         params:
           type: object
           additionalProperties: {type: string}

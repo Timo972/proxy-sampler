@@ -69,6 +69,25 @@ describe('NewRunDialog', () => {
     expect(await screen.findByText('Axis names must be unique')).toBeInTheDocument()
   })
 
+  it('submits the manual target country with the run', async () => {
+    const fetchMock = stubFetch()
+    renderDialog()
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('Run name'), 'geo')
+    await user.type(screen.getByLabelText('Proxy template'), 'socks5h://u-sid-{session}:pw@gate:1080')
+    await user.click(screen.getByRole('button', { name: 'Add axis' }))
+    await user.type(screen.getByLabelText('Axis 1 name'), 'session')
+    await user.selectOptions(screen.getByLabelText('Axis 1 kind'), 'random')
+    await user.type(screen.getByLabelText('Axis 1 count'), '2')
+    await user.selectOptions(screen.getByLabelText('Sampling mode'), 'sticky')
+    await user.click(screen.getByRole('button', { name: 'Advanced settings' }))
+    await user.type(screen.getByLabelText('Target country (optional)'), 'us')
+    await user.click(screen.getByRole('button', { name: 'Start run' }))
+    await vi.waitFor(() => expect(callsTo(fetchMock, '/api/runs')).toHaveLength(1))
+    const body = JSON.parse((callsTo(fetchMock, '/api/runs')[0][1] as RequestInit).body as string)
+    expect(body.target_country).toBe('us')
+  })
+
   it('caps the preview using the server-configured maximum', async () => {
     stubFetch(3)
     renderDialog()

@@ -257,6 +257,7 @@ type sessionRow struct {
 	StartedAt          pgtype.Timestamptz
 	StoppedAt          pgtype.Timestamptz
 	SequenceOffset     int32
+	TargetCountry      string
 }
 
 func mapSession(row sessionRow) (session.Session, error) {
@@ -273,7 +274,7 @@ func mapSession(row sessionRow) (session.Session, error) {
 		MaxSamples:  intPtr(row.MaxSamples), MaxDuration: secondsDurationPtr(row.MaxDurationSeconds),
 		Status: session.Status(row.Status), CreatedAt: row.CreatedAt.Time,
 		StartedAt: timePtr(row.StartedAt), StoppedAt: timePtr(row.StoppedAt),
-		SequenceOffset: int(row.SequenceOffset),
+		SequenceOffset: int(row.SequenceOffset), TargetCountry: row.TargetCountry,
 		Snapshot: session.Snapshot{
 			SamplesTaken: int(row.SamplesTaken), ProbesOK: row.ProbesOK, ProbesTotal: row.ProbesTotal,
 			DistinctIPs: int(row.DistinctIPs), LastSampleAt: timePtr(row.LastSampleAt),
@@ -293,7 +294,7 @@ func mapSessionByIDRow(row SessionByIDRow) (session.Session, error) {
 		DistinctIPs: row.DistinctIps, LastSampleAt: row.LastSampleAt, LastPrimaryIP: row.LastPrimaryIp,
 		LastCategory: row.LastCategory, LastRTTMs: row.LastRttMs, LastError: row.LastError,
 		CreatedAt: row.CreatedAt, StartedAt: row.StartedAt, StoppedAt: row.StoppedAt,
-		SequenceOffset: row.SequenceOffset,
+		SequenceOffset: row.SequenceOffset, TargetCountry: row.TargetCountry,
 	})
 }
 
@@ -307,7 +308,7 @@ func mapSessionsRow(row SessionsRow) (session.Session, error) {
 		DistinctIPs: row.DistinctIps, LastSampleAt: row.LastSampleAt, LastPrimaryIP: row.LastPrimaryIp,
 		LastCategory: row.LastCategory, LastRTTMs: row.LastRttMs, LastError: row.LastError,
 		CreatedAt: row.CreatedAt, StartedAt: row.StartedAt, StoppedAt: row.StoppedAt,
-		SequenceOffset: row.SequenceOffset,
+		SequenceOffset: row.SequenceOffset, TargetCountry: row.TargetCountry,
 	})
 }
 
@@ -321,7 +322,7 @@ func mapRunningSessionsRow(row RunningSessionsRow) (session.Session, error) {
 		DistinctIPs: row.DistinctIps, LastSampleAt: row.LastSampleAt, LastPrimaryIP: row.LastPrimaryIp,
 		LastCategory: row.LastCategory, LastRTTMs: row.LastRttMs, LastError: row.LastError,
 		CreatedAt: row.CreatedAt, StartedAt: row.StartedAt, StoppedAt: row.StoppedAt,
-		SequenceOffset: row.SequenceOffset,
+		SequenceOffset: row.SequenceOffset, TargetCountry: row.TargetCountry,
 	})
 }
 
@@ -338,7 +339,7 @@ func insertSessionParams(value session.Session) InsertSessionParams {
 		LastPrimaryIp: addrString(value.Snapshot.LastPrimaryIP), LastRttMs: durationMillisPtr(value.Snapshot.LastRTT),
 		LastError: value.Snapshot.LastError, CreatedAt: timestamp(value.CreatedAt),
 		StartedAt: timestampPtr(value.StartedAt), StoppedAt: timestampPtr(value.StoppedAt),
-		SequenceOffset: int32(value.SequenceOffset),
+		SequenceOffset: int32(value.SequenceOffset), TargetCountry: value.TargetCountry,
 	}
 }
 
