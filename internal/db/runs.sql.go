@@ -139,6 +139,36 @@ func (q *Queries) InsertRunSession(ctx context.Context, arg InsertRunSessionPara
 	return err
 }
 
+const lockRunForRename = `-- name: LockRunForRename :one
+SELECT run.name
+FROM variation_runs AS run
+WHERE run.id = $1
+FOR UPDATE
+`
+
+func (q *Queries) LockRunForRename(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, lockRunForRename, id)
+	var name string
+	err := row.Scan(&name)
+	return name, err
+}
+
+const renameRun = `-- name: RenameRun :exec
+UPDATE variation_runs
+SET name = $1
+WHERE id = $2
+`
+
+type RenameRunParams struct {
+	Name string    `json:"name"`
+	ID   uuid.UUID `json:"id"`
+}
+
+func (q *Queries) RenameRun(ctx context.Context, arg RenameRunParams) error {
+	_, err := q.db.Exec(ctx, renameRun, arg.Name, arg.ID)
+	return err
+}
+
 const runByID = `-- name: RunByID :one
 SELECT
   run.id, run.name, run.template_ciphertext, run.template_nonce, run.template_display,
@@ -275,6 +305,39 @@ func (q *Queries) RunIPObservations(ctx context.Context, arg RunIPObservationsPa
 			&i.ReputationFirstSeen,
 			&i.RefreshedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const runSessionNames = `-- name: RunSessionNames :many
+SELECT s.id, s.name, COALESCE(s.variant_params, '{}'::jsonb) AS variant_params
+FROM sampling_sessions AS s
+WHERE s.run_id = $1
+ORDER BY s.created_at ASC, s.id ASC
+`
+
+type RunSessionNamesRow struct {
+	ID            uuid.UUID `json:"id"`
+	Name          string    `json:"name"`
+	VariantParams []byte    `json:"variant_params"`
+}
+
+func (q *Queries) RunSessionNames(ctx context.Context, runID pgtype.UUID) ([]RunSessionNamesRow, error) {
+	rows, err := q.db.Query(ctx, runSessionNames, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RunSessionNamesRow
+	for rows.Next() {
+		var i RunSessionNamesRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.VariantParams); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

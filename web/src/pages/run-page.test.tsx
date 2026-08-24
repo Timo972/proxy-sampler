@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -77,5 +78,76 @@ describe('RunPage', () => {
     // in both the cell and variants tables, so assert presence, not uniqueness.
     expect((await screen.findAllByText(/country=de/)).length).toBeGreaterThan(0)
     expect(screen.getByText(/target US \(manual\)/)).toBeInTheDocument()
+  })
+
+  it('renames the run from the header and shows the cascaded variant name', async () => {
+    let name = 'Alpha'
+    const detail = () => ({
+      run: { id: 'r1', name, template_display: 'gate:1080', status: 'running', variant_count: 1, distinct_ips: 0, created_at: new Date().toISOString() },
+      variants: [{ session_id: 's1', name: `${name} (region=eu)`, cell_key: '{}', params: { region: 'eu' }, status: 'running', samples_taken: 0, distinct_ips: 0 }],
+    })
+    const report = { distinct_ips: 0, estimated_pool_size: 0, pool_size_lower_bound: false, honor_rate: null, composition: { mobile: 0, residential: 0, datacenter: 0, unknown: 0 }, risk_histogram: [], flagged_ips: 0, flagged_percent: 0, dnsbl_hit_ips: 0, series: [], cells: [], ips: [] }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (init?.method === 'PATCH') {
+        // The server renames the run and cascades to the generated variant name.
+        name = (JSON.parse(String(init.body)) as { name: string }).name
+        return Promise.resolve(new Response(JSON.stringify(detail().run), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      }
+      const body = url.endsWith('/report') ? report : detail()
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs/r1']}>
+          <Routes><Route path="/runs/:id" element={<RunPage />} /></Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', { level: 1, name: 'Alpha' })
+    await user.click(screen.getByRole('button', { name: 'Rename run name' }))
+    const input = screen.getByRole('textbox', { name: 'run name' })
+    await user.clear(input)
+    await user.type(input, 'Beta{Enter}')
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Beta' })).toBeInTheDocument()
+    expect(await screen.findByText('Beta (region=eu)')).toBeInTheDocument()
+    const patches = fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH')
+    expect(patches).toHaveLength(1)
+    expect(JSON.parse(String((patches[0][1] as RequestInit).body))).toEqual({ name: 'Beta' })
+  })
+
+  it('surfaces a failed run rename without losing the typed name', async () => {
+    const detail = { run: { id: 'r1', name: 'Alpha', template_display: 'gate:1080', status: 'running', variant_count: 0, distinct_ips: 0, created_at: new Date().toISOString() }, variants: [] }
+    const report = { distinct_ips: 0, estimated_pool_size: 0, pool_size_lower_bound: false, honor_rate: null, composition: { mobile: 0, residential: 0, datacenter: 0, unknown: 0 }, risk_histogram: [], flagged_ips: 0, flagged_percent: 0, dnsbl_hit_ips: 0, series: [], cells: [], ips: [] }
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        return Promise.resolve(new Response(JSON.stringify({ code: 'invalid_request', message: 'request is invalid' }), { status: 400, statusText: 'Request failed', headers: { 'Content-Type': 'application/json' } }))
+      }
+      const body = String(input).endsWith('/report') ? report : detail
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    }))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs/r1']}>
+          <Routes><Route path="/runs/:id" element={<RunPage />} /></Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', { level: 1, name: 'Alpha' })
+    await user.click(screen.getByRole('button', { name: 'Rename run name' }))
+    const input = screen.getByRole('textbox', { name: 'run name' })
+    await user.clear(input)
+    await user.type(input, 'Rejected name{Enter}')
+
+    expect(await screen.findByText('Could not rename run')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'run name' })).toHaveValue('Rejected name')
   })
 })

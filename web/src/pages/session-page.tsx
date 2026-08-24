@@ -10,11 +10,12 @@ import { SummaryStrip } from '../components/report/summary-strip'
 import { TargetingPanel } from '../components/report/targeting-panel'
 import { LatencyChart, PoolGrowthChart, SuccessRateChart } from '../components/report/timeseries-charts'
 import { SessionStatusBadge } from '../components/session-status-badge'
+import { EditableTitle } from '../components/editable-title'
 import { Alert } from '../components/ui/alert'
 import { Button } from '../components/ui/button'
 import { Skeleton } from '../components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
-import { APIError, useReenableSession, useSession, useSessionReport, useSessionSamples, useStopSession } from '../lib/api'
+import { APIError, useEditSession, useReenableSession, useSession, useSessionReport, useSessionSamples, useStopSession } from '../lib/api'
 import { formatPercent, formatTimestampWithZone } from '../lib/format'
 
 type ReportTab = 'overview' | 'reputation' | 'samples'
@@ -31,6 +32,7 @@ export function SessionPage() {
   const samples = useSessionSamples(id, page, tab === 'samples', running)
   const stop = useStopSession()
   const reenable = useReenableSession()
+  const edit = useEditSession()
 
   if (session.isPending) return <SessionLoading includeSamples={tab === 'samples'} />
   if (session.error instanceof APIError && session.error.status === 404) return <NotFound />
@@ -62,7 +64,7 @@ export function SessionPage() {
       <Link to="/" className="breadcrumb">Sessions</Link>
       <header className="session-header">
         <div className="session-title">
-          <div className="session-title-line"><h1>{session.data.name}</h1><SessionStatusBadge status={session.data.status} /></div>
+          <div className="session-title-line"><EditableTitle value={session.data.name} label="session name" pending={edit.isPending} onSave={(name) => edit.mutateAsync({ id, name })} /><SessionStatusBadge status={session.data.status} /></div>
           <p><span className="mono">{session.data.proxy_display}</span><span aria-hidden="true"> · </span><span>{session.data.mode === 'sticky' ? 'Sticky' : 'Pool'}</span></p>
         </div>
         <div className="session-actions">
@@ -73,6 +75,7 @@ export function SessionPage() {
       </header>
       {stop.isError && <Alert className="inline-alert"><AlertTriangle aria-hidden="true" /><div><strong>Could not stop session</strong><p>{errorMessage(stop.error)}</p></div></Alert>}
       {reenable.isError && <Alert className="inline-alert"><AlertTriangle aria-hidden="true" /><div><strong>Could not re-enable session</strong><p>{errorMessage(reenable.error)}</p></div></Alert>}
+      {edit.isError && <Alert className="inline-alert"><AlertTriangle aria-hidden="true" /><div><strong>Could not rename session</strong><p>{errorMessage(edit.error)}</p></div></Alert>}
       <SummaryStrip session={session.data} />
       <div className="report-meta" aria-live="polite">{report.dataUpdatedAt > 0 ? `Last updated ${formatTimestampWithZone(new Date(report.dataUpdatedAt).toISOString())}` : 'Waiting for report update'}</div>
 

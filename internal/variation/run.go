@@ -88,5 +88,10 @@ type Store interface {
 	// aggregated server-side, so a large export never holds the whole pool in
 	// memory. Rows arrive in ascending IP order.
 	StreamPoolIPs(ctx context.Context, id uuid.UUID, visit func(IPRow) error) error
+	// RenameRun changes a run's name and, in the same transaction, the names of
+	// the child sessions that still carry the name VariantName generated from
+	// the run's previous name. A child renamed by hand no longer matches and is
+	// left alone.
+	RenameRun(ctx context.Context, id uuid.UUID, name string) error
 	DeleteRun(ctx context.Context, id uuid.UUID) error
 }

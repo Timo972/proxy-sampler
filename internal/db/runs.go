@@ -231,6 +231,55 @@ func (s *Store) StreamPoolIPs(ctx context.Context, runID uuid.UUID, visit func(v
 	return rows.Err()
 }
 
+func (s *Store) RenameRun(ctx context.Context, id uuid.UUID, name string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin rename run: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+
+	// Lock the run so a concurrent rename cannot slip between reading the old
+	// name and rewriting the children derived from it.
+	previous, err := q.LockRunForRename(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return variation.ErrRunNotFound
+		}
+		return fmt.Errorf("lock run for rename: %w", err)
+	}
+	if err := q.RenameRun(ctx, RenameRunParams{ID: id, Name: name}); err != nil {
+		return fmt.Errorf("rename run: %w", err)
+	}
+
+	children, err := q.RunSessionNames(ctx, pgUUID(id))
+	if err != nil {
+		return fmt.Errorf("run session names: %w", err)
+	}
+	for _, child := range children {
+		var params map[string]string
+		if len(child.VariantParams) > 0 {
+			if err := json.Unmarshal(child.VariantParams, &params); err != nil {
+				// A child whose params cannot be read cannot be matched against
+				// its generated name, so leave its name as the user sees it.
+				continue
+			}
+		}
+		// Only a child still carrying the name generated from the old run name
+		// follows the rename; anything else was renamed by hand.
+		if child.Name != variation.VariantName(previous, params) {
+			continue
+		}
+		if _, err := q.RenameSession(ctx, RenameSessionParams{ID: child.ID, Name: variation.VariantName(name, params)}); err != nil {
+			return fmt.Errorf("rename run session: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit rename run: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) DeleteRun(ctx context.Context, id uuid.UUID) error {
 	if err := s.q.DeleteRun(ctx, id); err != nil {
 		return fmt.Errorf("delete run: %w", err)

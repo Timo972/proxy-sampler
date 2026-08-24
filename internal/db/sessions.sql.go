@@ -152,6 +152,25 @@ func (q *Queries) ReenableSession(ctx context.Context, arg ReenableSessionParams
 	return result.RowsAffected(), nil
 }
 
+const renameSession = `-- name: RenameSession :execrows
+UPDATE sampling_sessions
+SET name = $1
+WHERE id = $2
+`
+
+type RenameSessionParams struct {
+	Name string    `json:"name"`
+	ID   uuid.UUID `json:"id"`
+}
+
+func (q *Queries) RenameSession(ctx context.Context, arg RenameSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, renameSession, arg.Name, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const runningSessions = `-- name: RunningSessions :many
 SELECT
   s.id, s.name, s.proxy_ciphertext, s.proxy_nonce, s.proxy_display, s.mode,

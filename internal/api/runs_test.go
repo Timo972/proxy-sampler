@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -216,6 +217,7 @@ type memoryRunStore struct {
 	lastObservationLimit int
 	streamErr            error
 	runByIDErr           error
+	renameRunErr         error
 }
 
 func newMemoryRunStore() *memoryRunStore {
@@ -276,6 +278,37 @@ func (m *memoryRunStore) RunIPObservations(_ context.Context, id uuid.UUID, limi
 	}
 	return obs, nil
 }
+
+// RenameRun mirrors the real store: the run is renamed, and a child follows
+// only while it still carries the name generated from the old run name.
+func (m *memoryRunStore) RenameRun(_ context.Context, id uuid.UUID, name string) error {
+	if m.renameRunErr != nil {
+		return m.renameRunErr
+	}
+	for i := range m.runs {
+		if m.runs[i].ID != id {
+			continue
+		}
+		previous := m.runs[i].Name
+		m.runs[i].Name = name
+		children := m.children[id]
+		for j := range children {
+			var params map[string]string
+			if len(children[j].Params) > 0 {
+				if err := json.Unmarshal(children[j].Params, &params); err != nil {
+					continue
+				}
+			}
+			if children[j].Session.Name != variation.VariantName(previous, params) {
+				continue
+			}
+			children[j].Session.Name = variation.VariantName(name, params)
+		}
+		return nil
+	}
+	return variation.ErrRunNotFound
+}
+
 func (m *memoryRunStore) DeleteRun(_ context.Context, id uuid.UUID) error {
 	delete(m.children, id)
 	for i, r := range m.runs {

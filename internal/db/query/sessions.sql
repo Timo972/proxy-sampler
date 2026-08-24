@@ -82,6 +82,11 @@ SET status = 'running',
     stopped_at = NULL
 WHERE id = sqlc.arg(id) AND status IN ('stopped', 'finished');
 
+-- name: RenameSession :execrows
+UPDATE sampling_sessions
+SET name = sqlc.arg(name)
+WHERE id = sqlc.arg(id);
+
 -- name: DeleteSession :exec
 DELETE FROM sampling_sessions WHERE id = sqlc.arg(id);
 

@@ -84,5 +84,22 @@ WHERE s.run_id = sqlc.arg(run_id)
 ORDER BY si.last_seen DESC
 LIMIT sqlc.arg(row_limit);
 
+-- name: LockRunForRename :one
+SELECT run.name
+FROM variation_runs AS run
+WHERE run.id = sqlc.arg(id)
+FOR UPDATE;
+
+-- name: RenameRun :exec
+UPDATE variation_runs
+SET name = sqlc.arg(name)
+WHERE id = sqlc.arg(id);
+
+-- name: RunSessionNames :many
+SELECT s.id, s.name, COALESCE(s.variant_params, '{}'::jsonb) AS variant_params
+FROM sampling_sessions AS s
+WHERE s.run_id = sqlc.arg(run_id)
+ORDER BY s.created_at ASC, s.id ASC;
+
 -- name: DeleteRun :exec
 DELETE FROM variation_runs WHERE id = sqlc.arg(id);

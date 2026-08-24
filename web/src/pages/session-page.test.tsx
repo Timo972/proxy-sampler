@@ -367,6 +367,44 @@ describe('SessionPage', () => {
     expect(screen.getByTestId('location')).toHaveTextContent(`/${sessionID}?tab=reputation`)
     expect(callsFor(fetchMock, `/api/sessions/${sessionID}/samples?page=1&page_size=50`)).toBe(1)
   })
+
+  it('renames the session from the header and shows the stored name', async () => {
+    let name = 'Frankfurt sticky'
+    const fetchMock = createFetch({ session: () => ({ ...runningSession, name }) })
+    vi.stubGlobal('fetch', fetchMock)
+    renderSession()
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', { level: 1, name: 'Frankfurt sticky' })
+    await user.click(screen.getByRole('button', { name: 'Rename session name' }))
+    const input = screen.getByRole('textbox', { name: 'session name' })
+    await user.clear(input)
+    // The server is the source of truth for the name the page then refetches.
+    name = 'Frankfurt residential'
+    await user.type(input, 'Frankfurt residential{Enter}')
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Frankfurt residential' })).toBeInTheDocument()
+    const patches = fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH')
+    expect(patches).toHaveLength(1)
+    expect(JSON.parse(String((patches[0][1] as RequestInit).body))).toEqual({ name: 'Frankfurt residential' })
+  })
+
+  it('surfaces a failed rename without losing the typed name', async () => {
+    vi.stubGlobal('fetch', createFetch({
+      renameResponse: () => jsonResponse({ code: 'invalid_request', message: 'request is invalid' }, 400),
+    }))
+    renderSession()
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', { level: 1, name: 'Frankfurt sticky' })
+    await user.click(screen.getByRole('button', { name: 'Rename session name' }))
+    const input = screen.getByRole('textbox', { name: 'session name' })
+    await user.clear(input)
+    await user.type(input, 'Rejected name{Enter}')
+
+    expect(await screen.findByText('Could not rename session')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'session name' })).toHaveValue('Rejected name')
+  })
 })
 
 function renderSession(search = '') {
@@ -395,12 +433,19 @@ function createFetch(options: {
   report?: typeof report
   samples?: typeof samplePage
   reportResponse?: () => Response
+  renameResponse?: () => Response
 } = {}) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     if (url === `/api/sessions/${sessionID}/report`) return options.reportResponse?.() ?? jsonResponse(options.report ?? report)
     if (url.startsWith(`/api/sessions/${sessionID}/samples`)) return jsonResponse(options.samples ?? samplePage)
     if (url === `/api/sessions/${sessionID}/stop` && init?.method === 'POST') return emptyResponse()
+    if (url === `/api/sessions/${sessionID}` && init?.method === 'PATCH') {
+      if (options.renameResponse) return options.renameResponse()
+      const body = JSON.parse(String(init.body)) as { name: string }
+      const current = typeof options.session === 'function' ? options.session() : options.session
+      return jsonResponse({ ...(current ?? runningSession), name: body.name })
+    }
     if (url === `/api/sessions/${sessionID}`) {
       const value = typeof options.session === 'function' ? options.session() : options.session
       return jsonResponse(value ?? runningSession)

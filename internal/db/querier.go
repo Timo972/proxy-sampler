@@ -18,10 +18,14 @@ type Querier interface {
 	InsertRun(ctx context.Context, arg InsertRunParams) error
 	InsertRunSession(ctx context.Context, arg InsertRunSessionParams) error
 	InsertSession(ctx context.Context, arg InsertSessionParams) error
+	LockRunForRename(ctx context.Context, id uuid.UUID) (string, error)
 	ReenableSession(ctx context.Context, arg ReenableSessionParams) (int64, error)
+	RenameRun(ctx context.Context, arg RenameRunParams) error
+	RenameSession(ctx context.Context, arg RenameSessionParams) (int64, error)
 	ReputationByIP(ctx context.Context, ip string) (ReputationByIPRow, error)
 	RunByID(ctx context.Context, id uuid.UUID) (RunByIDRow, error)
 	RunIPObservations(ctx context.Context, arg RunIPObservationsParams) ([]RunIPObservationsRow, error)
+	RunSessionNames(ctx context.Context, runID pgtype.UUID) ([]RunSessionNamesRow, error)
 	RunSessions(ctx context.Context, runID pgtype.UUID) ([]RunSessionsRow, error)
 	RunningSessions(ctx context.Context) ([]RunningSessionsRow, error)
 	Runs(ctx context.Context) ([]RunsRow, error)

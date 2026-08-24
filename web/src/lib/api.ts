@@ -46,6 +46,16 @@ export interface CreateSessionRequest {
   target_country?: string
 }
 
+// Edit requests carry only the properties being changed. Both are optional-by-
+// design so further editable fields can join them without breaking callers.
+export interface EditSessionRequest {
+  name?: string
+}
+
+export interface EditRunRequest {
+  name?: string
+}
+
 export interface Readiness {
   postgres: boolean
   clickhouse: boolean
@@ -230,6 +240,22 @@ export function useReenableSession() {
         queryClient.invalidateQueries({ queryKey: ['sessions', id] }),
         queryClient.invalidateQueries({ queryKey: ['session-report', id] }),
         queryClient.invalidateQueries({ queryKey: ['session-samples', id] }),
+      ])
+    },
+  })
+}
+
+export function useEditSession() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...edit }: EditSessionRequest & { id: string }) => api<Session>(`/api/sessions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(edit),
+    }),
+    onSuccess: async (_data, { id }) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['sessions'] }),
+        queryClient.invalidateQueries({ queryKey: ['sessions', id] }),
       ])
     },
   })
@@ -451,6 +477,25 @@ export function useReenableRun() {
         queryClient.invalidateQueries({ queryKey: ['runs'] }),
         queryClient.invalidateQueries({ queryKey: ['runs', id] }),
         queryClient.invalidateQueries({ queryKey: ['run-report', id] }),
+      ])
+    },
+  })
+}
+
+export function useEditRun() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...edit }: EditRunRequest & { id: string }) => api<Run>(`/api/runs/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(edit),
+    }),
+    onSuccess: async (_data, { id }) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['runs'] }),
+        queryClient.invalidateQueries({ queryKey: ['runs', id] }),
+        // A run rename cascades to its variant sessions, so their names are
+        // stale too.
+        queryClient.invalidateQueries({ queryKey: ['sessions'] }),
       ])
     },
   })

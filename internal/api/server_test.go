@@ -687,6 +687,7 @@ type memoryStore struct {
 	rejectCanceledStop bool
 	deleteCalls        int
 	reenableErr        error
+	renameErr          error
 }
 
 func newMemoryStore() *memoryStore { return &memoryStore{sessions: []session.Session{}} }
@@ -755,6 +756,19 @@ func (s *memoryStore) Reenable(_ context.Context, id uuid.UUID, at time.Time) er
 			s.sessions[i].Status = session.StatusRunning
 			s.sessions[i].StartedAt = &started
 			s.sessions[i].StoppedAt = nil
+			return nil
+		}
+	}
+	return session.ErrNotFound
+}
+
+func (s *memoryStore) Rename(_ context.Context, id uuid.UUID, name string) error {
+	if s.renameErr != nil {
+		return s.renameErr
+	}
+	for i := range s.sessions {
+		if s.sessions[i].ID == id {
+			s.sessions[i].Name = name
 			return nil
 		}
 	}
