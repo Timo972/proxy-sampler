@@ -458,16 +458,28 @@ func TestNameCustomizedBackfillClassifiesExistingRows(t *testing.T) {
 		TemplateNonce: []byte("n"), TemplateDisplay: "gate:1080",
 		Axes: json.RawMessage(`{}`), CreatedAt: nowUTC(),
 	}
-	generated, multiKey, noParams, custom := testSession(), testSession(), testSession(), testSession()
-	generated.ID, multiKey.ID, noParams.ID, custom.ID = uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	// mixedCase and nonASCII are the cases where a locale-aware cluster
+	// collation orders keys differently from the bytewise sort.Strings that
+	// VariantName uses: under en_US.UTF-8 "a" sorts before "Z", and "ä" sorts
+	// beside "a" rather than after "z".
+	mixedCase := map[string]string{"Z": "1", "a": "2"}
+	nonASCII := map[string]string{"ä": "1", "z": "2"}
+	generated, multiKey, noParams := testSession(), testSession(), testSession()
+	mixedCaseChild, nonASCIIChild, custom := testSession(), testSession(), testSession()
+	generated.ID, multiKey.ID, noParams.ID = uuid.New(), uuid.New(), uuid.New()
+	mixedCaseChild.ID, nonASCIIChild.ID, custom.ID = uuid.New(), uuid.New(), uuid.New()
 	generated.Name = variation.VariantName("Alpha", map[string]string{"region": "eu"})
 	multiKey.Name = variation.VariantName("Alpha", multi)
 	noParams.Name = variation.VariantName("Alpha", nil)
+	mixedCaseChild.Name = variation.VariantName("Alpha", mixedCase)
+	nonASCIIChild.Name = variation.VariantName("Alpha", nonASCII)
 	custom.Name = "My custom probe"
 	if err := store.CreateRun(ctx, run, []variation.ChildSession{
 		{Session: generated, Params: json.RawMessage(`{"region":"eu"}`), CellKey: `{"region":"eu"}`},
 		{Session: multiKey, Params: json.RawMessage(`{"region":"eu","asn":"64500"}`), CellKey: `{}`},
 		{Session: noParams, Params: json.RawMessage(`{}`), CellKey: `{}`},
+		{Session: mixedCaseChild, Params: json.RawMessage(`{"Z":"1","a":"2"}`), CellKey: `{}`},
+		{Session: nonASCIIChild, Params: json.RawMessage(`{"ä":"1","z":"2"}`), CellKey: `{}`},
 		{Session: custom, Params: json.RawMessage(`{"region":"us"}`), CellKey: `{"region":"us"}`},
 	}); err != nil {
 		t.Fatal(err)
@@ -498,6 +510,8 @@ func TestNameCustomizedBackfillClassifiesExistingRows(t *testing.T) {
 		{"generated child", generated.ID, false},
 		{"generated child with several params", multiKey.ID, false},
 		{"generated child with no params", noParams.ID, false},
+		{"generated child with mixed-case keys", mixedCaseChild.ID, false},
+		{"generated child with non-ASCII keys", nonASCIIChild.ID, false},
 		{"hand-renamed child", custom.ID, true},
 		{"standalone session", standalone.ID, true},
 	} {

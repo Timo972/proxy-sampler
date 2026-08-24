@@ -95,13 +95,35 @@ describe('EditableTitle', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Frankfurt sticky' })).toBeInTheDocument()
   })
 
-  it('caps the input at the 100-character limit the API enforces', async () => {
+  // The API counts Unicode code points, so the input has to as well. HTML
+  // maxLength counts UTF-16 code units, which would stop the operator at 50
+  // non-BMP characters even though the API accepts 100.
+  it('accepts 100 code points even when they are non-BMP characters', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    render(<EditableTitle value="Frankfurt sticky" label="session name" onSave={onSave} />)
+    const user = userEvent.setup()
+    const hundredEmoji = '😀'.repeat(100)
+
+    await user.click(screen.getByRole('button', { name: 'Rename session name' }))
+    const input = screen.getByRole('textbox', { name: 'session name' })
+    await user.clear(input)
+    await user.paste(hundredEmoji)
+
+    expect(input).toHaveValue(hundredEmoji)
+    await user.type(input, '{Enter}')
+    expect(onSave).toHaveBeenCalledExactlyOnceWith(hundredEmoji)
+  })
+
+  it('caps the input at the 100 code points the API enforces', async () => {
     render(<EditableTitle value="Frankfurt sticky" label="session name" onSave={vi.fn()} />)
     const user = userEvent.setup()
 
     await user.click(screen.getByRole('button', { name: 'Rename session name' }))
+    const input = screen.getByRole('textbox', { name: 'session name' })
+    await user.clear(input)
+    await user.paste('😀'.repeat(101))
 
-    expect(screen.getByRole('textbox', { name: 'session name' })).toHaveAttribute('maxLength', '100')
+    expect(Array.from(String((input as HTMLInputElement).value))).toHaveLength(100)
   })
 
   it('keeps the input open and disabled while the save is in flight', async () => {

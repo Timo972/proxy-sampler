@@ -14,6 +14,12 @@ UPDATE sampling_sessions SET name_customized = true WHERE run_id IS NULL;
 -- name generates is treated as generated, anything else as customized. This
 -- mirrors the behaviour of VariantName (params sorted by key, "k=v" joined with
 -- commas, empty params yielding the bare run name).
+--
+-- ORDER BY ... COLLATE "C" is required, not stylistic. VariantName sorts with
+-- Go's sort.Strings, which compares bytewise, while a bare ORDER BY uses the
+-- cluster's collation. Under a locale-aware one such as en_US.UTF-8, {"Z":"1",
+-- "a":"2"} reconstructs as "a=2,Z=1" instead of "Z=1,a=2" and the child is
+-- misclassified as customized, silently dropping it out of later run renames.
 UPDATE sampling_sessions AS s
 SET name_customized = true
 FROM variation_runs AS r
@@ -22,7 +28,7 @@ WHERE s.run_id = r.id
     CASE
       WHEN s.variant_params IS NULL OR s.variant_params = '{}'::jsonb THEN r.name
       ELSE r.name || ' (' || (
-        SELECT string_agg(entry.key || '=' || entry.value, ',' ORDER BY entry.key)
+        SELECT string_agg(entry.key || '=' || entry.value, ',' ORDER BY entry.key COLLATE "C")
         FROM jsonb_each_text(s.variant_params) AS entry
       ) || ')'
     END

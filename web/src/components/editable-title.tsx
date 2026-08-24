@@ -4,8 +4,16 @@ import { Pencil } from 'lucide-react'
 import { Input } from './ui/input'
 
 // maxNameLength mirrors the API's own limit, so an over-long name is stopped
-// here rather than bouncing back as a 400.
+// here rather than bouncing back as a 400. The API counts Unicode code points,
+// so this has to as well: the HTML maxLength attribute counts UTF-16 code
+// units, which would cut a name of non-BMP characters (emoji, say) off at half
+// the length the API actually accepts.
 const maxNameLength = 100
+
+function clampToCodePoints(value: string, limit: number): string {
+  const codePoints = Array.from(value)
+  return codePoints.length <= limit ? value : codePoints.slice(0, limit).join('')
+}
 
 interface EditableTitleProps {
   value: string
@@ -87,9 +95,8 @@ export function EditableTitle({ value, label, onSave, pending }: EditableTitlePr
         className="editable-title-input"
         aria-label={label}
         value={draft}
-        maxLength={maxNameLength}
         disabled={pending}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => setDraft(clampToCodePoints(event.target.value, maxNameLength))}
         onKeyDown={keyDown}
         onBlur={() => void commit()}
       />
